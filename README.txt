@@ -78,3 +78,15 @@ Release status
 v0.1 is an initial testing release. Builds, unit tests and Android lint pass.
 Google account integration, physical TV playback and 4K rendering are unverified.
 AlbumBeam is an independent project and is not affiliated with Google.
+
+Pairing fix in v0.1.1
+Upgrade both apps to v0.1.1, then choose End / Pair again on the TV and scan the
+new QR using the phone companion. The TV replaces its old local TLS certificate
+key to permit prehashed TLS signing and explicitly negotiates TLS 1.2 for older
+TV compatibility. Certificate pinning remains required. The APK signing key and
+OAuth package name are unchanged; Google Cloud configuration remains valid.
+
+The Android instrumentation test PairingTlsTest exercises legacy key migration,
+real pinned TLS pairing, certificate mismatch rejection, session transfer and
+replay rejection. Run connectedPhoneDebugAndroidTest on a connected Android
+device; it cannot be run without a device/emulator.

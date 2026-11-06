@@ -1,7 +1,7 @@
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android"); id("org.jetbrains.kotlin.plugin.compose") }
 android {
  namespace="dev.personal.photostv"; compileSdkVersion("android-37.0")
- defaultConfig { applicationId="dev.personal.photostv"; minSdk=26; targetSdk=36; versionCode=1; versionName="0.1" }
+ defaultConfig { applicationId="dev.personal.photostv"; minSdk=26; targetSdk=36; versionCode=2; versionName="0.1.1"; testInstrumentationRunner="androidx.test.runner.AndroidJUnitRunner" }
  flavorDimensions += "device"
  productFlavors { create("phone") { dimension="device"; applicationIdSuffix=".phone" }; create("tv") { dimension="device"; applicationIdSuffix=".tv" } }
  buildFeatures { compose=true; buildConfig=true }
@@ -23,4 +23,6 @@ dependencies {
  implementation("com.google.zxing:core:3.5.3")
  implementation("io.coil-kt:coil-compose:2.7.0")
  testImplementation("junit:junit:4.13.2")
+ androidTestImplementation("androidx.test.ext:junit:1.3.0")
+ androidTestImplementation("androidx.test:runner:1.7.0")
 }

@@ -22,12 +22,18 @@ class PairServer(val receive:(JSONObject)->Unit):NanoHTTPD(0) {
  val pin:String
  init {
   val ks=KeyStore.getInstance("AndroidKeyStore").apply{load(null)}
-  val alias="photos-tv-pair"
-  if(!ks.containsAlias(alias)) KeyPairGenerator.getInstance("RSA","AndroidKeyStore").apply { initialize(KeyGenParameterSpec.Builder(alias,KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY).setDigests(KeyProperties.DIGEST_SHA256).setSignaturePaddings(KeyProperties.SIGNATURE_PADDING_RSA_PKCS1,KeyProperties.SIGNATURE_PADDING_RSA_PSS).build()) }.generateKeyPair()
+  // v0.1's key authorized only SHA-256, but Android TLS signs prehashed data.
+  // Key authorizations cannot be edited, so migrate to a fresh local TLS key.
+  val alias="photos-tv-pair-v2"
+  if(!ks.containsAlias(alias)) KeyPairGenerator.getInstance("RSA","AndroidKeyStore").apply { initialize(KeyGenParameterSpec.Builder(alias,KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY).setDigests(KeyProperties.DIGEST_NONE,KeyProperties.DIGEST_SHA256,KeyProperties.DIGEST_SHA384,KeyProperties.DIGEST_SHA512).setSignaturePaddings(KeyProperties.SIGNATURE_PADDING_RSA_PKCS1,KeyProperties.SIGNATURE_PADDING_RSA_PSS).build()) }.generateKeyPair()
+  // Avoid the key manager selecting the legacy, incompatible RSA key.
+  if(ks.containsAlias("photos-tv-pair")) ks.deleteEntry("photos-tv-pair")
   pin=fingerprint(ks.getCertificate(alias).encoded)
   val km=KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm()).apply{init(ks,null)}
   val ssl=SSLContext.getInstance("TLS").apply{init(km.keyManagers,null,SecureRandom())}
-  makeSecure(ssl.serverSocketFactory,null)
+  // Explicitly enable TLS 1.2 for compatibility with older TV keystores.
+  // This affects only LAN pairing; Google requests retain normal TLS negotiation.
+  makeSecure(ssl.serverSocketFactory,arrayOf("TLSv1.2"))
  }
  fun link(host:String)=Link(host,listeningPort,pin,gate.code)
  @Synchronized override fun serve(s:IHTTPSession):Response = try {
@@ -49,5 +55,16 @@ class Connection(val link:Link) {
  private val ssl=SSLContext.getInstance("TLS").apply{init(null,arrayOf(trust),SecureRandom())}
  private val client=OkHttpClient.Builder().sslSocketFactory(ssl.socketFactory,trust).hostnameVerifier{host,_->host==link.host}.followRedirects(false).build()
  fun post(path:String,j:JSONObject):JSONObject = client.newCall(Request.Builder().url("https://${link.host}:${link.port}/$path").header("Authorization","Bearer $auth").post(j.toString().toRequestBody("application/json".toMediaType())).build()).execute().use { require(it.isSuccessful){"TV connection rejected. Pair again."}; JSONObject(it.body!!.string()) }
- fun pair(){auth=post("pair",JSONObject().put("code",link.code)).getString("auth")}
+ fun pair(){
+  try { auth=post("pair",JSONObject().put("code",link.code)).getString("auth") }
+  catch(e:java.io.IOException){
+   val detail=when(e){
+    is javax.net.ssl.SSLException -> "Secure pairing failed. Update AlbumBeam on the TV, choose End / Pair again, and rescan."
+    is java.net.SocketTimeoutException -> "TV did not respond. Check both devices are on the same home network."
+    is java.net.ConnectException -> "Cannot reach TV. Keep AlbumBeam open on the TV and scan a fresh QR."
+    else -> "TV connection closed. Update the TV app and scan a fresh QR."
+   }
+   throw java.io.IOException(detail,e)
+  }
+ }
 }
