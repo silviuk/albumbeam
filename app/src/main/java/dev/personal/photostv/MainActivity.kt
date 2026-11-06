@@ -73,6 +73,20 @@ class MainActivity:ComponentActivity() {
    val matrix=MultiFormatWriter().encode(server!!.link(host).json(),BarcodeFormat.QR_CODE,600,600)
    qr=Bitmap.createBitmap(600,600,Bitmap.Config.ARGB_8888).apply { for(x in 0..599) for(y in 0..599) setPixel(x,y,if(matrix[x,y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE) }
    status="Scan using the AlbumBeam Companion. QR expires in five minutes."
+   val checking=server!!
+   task {
+    AppLog.add("TV: starting loopback TLS self-test")
+    try {
+     withContext(Dispatchers.IO){Connection(checking.link("127.0.0.1")).probe()}
+     if(server===checking) AppLog.add("TV: local TLS self-test PASSED; certificate, signing and HTTP work")
+    }catch(e:Exception){
+     if(e is CancellationException) throw e
+     if(server===checking){
+      val detail="TV local TLS self-test FAILED: "+tlsDetails(e)
+      AppLog.add(detail);status=detail.take(450)
+     }
+    }
+   }
   }catch(e:Exception){status=e.message ?: "Pairing unavailable"}
  }
  fun authorize(refresh:Boolean=false) {

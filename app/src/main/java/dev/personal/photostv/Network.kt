@@ -22,18 +22,22 @@ class PairServer(private val diagnostic:(String)->Unit = {}, val receive:(JSONOb
  private val gate=PairGate(); private val auth=secret(); private val seen=mutableSetOf<String>()
  val pin:String
  private val logger=java.util.logging.Logger.getLogger(NanoHTTPD::class.java.name)
+ @Volatile private var stopping=false
  private var previousLevel:java.util.logging.Level?=null
  private val diagnostics=object:java.util.logging.Handler(){
   override fun publish(record:java.util.logging.LogRecord){
+   if(stopping)return
    val failure=record.thrown ?: return
    // TLS details contain no HTTP payload, pairing secret or Google bearer token.
-   if(generateSequence(failure){it.cause}.take(8).any{it is javax.net.ssl.SSLException || it is java.security.GeneralSecurityException})
-    { AppLog.add("TV TLS error: "+tlsDetails(failure)); diagnostic("TV TLS error: "+tlsDetails(failure)) }
+   val isTls=generateSequence(failure){it.cause}.take(8).any{it is javax.net.ssl.SSLException || it is java.security.GeneralSecurityException}
+   val details=if(isTls) tlsDetails(failure) else failure.javaClass.simpleName
+   AppLog.add("TV socket error: "+details)
+   diagnostic("TV socket error: "+details)
   }
   override fun flush(){}
   override fun close(){}
  }
- override fun stop(){super.stop();logger.removeHandler(diagnostics);logger.level=previousLevel}
+ override fun stop(){stopping=true;super.stop();logger.removeHandler(diagnostics);logger.level=previousLevel}
  init {
   val ks=KeyStore.getInstance("AndroidKeyStore").apply{load(null)}
   // v0.1's key authorized only SHA-256, but Android TLS signs prehashed data.
@@ -44,8 +48,12 @@ class PairServer(private val diagnostic:(String)->Unit = {}, val receive:(JSONOb
   if(ks.containsAlias("photos-tv-pair")) ks.deleteEntry("photos-tv-pair")
   AppLog.add("TV pairing certificate ready (v2 key)")
   pin=fingerprint(ks.getCertificate(alias).encoded)
-  val km=KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm()).apply{init(ks,null)}
-  val ssl=SSLContext.getInstance("TLS").apply{init(km.keyManagers,null,SecureRandom())}
+  val key=ks.getKey(alias,null) as? PrivateKey ?: error("TV TLS private key unavailable")
+  val chain=ks.getCertificateChain(alias).map{it as X509Certificate}.toTypedArray()
+  val identity=PairingKeyManager(alias,key,chain){chosen ->
+   AppLog.add(if(chosen) "TV: pairing signing identity selected" else "TV: requested key type does not match pairing identity")
+  }
+  val ssl=SSLContext.getInstance("TLS").apply{init(arrayOf(identity),null,SecureRandom())}
   // Explicitly enable TLS 1.2 for compatibility with older TV keystores.
   // This affects only LAN pairing; Google requests retain normal TLS negotiation.
   makeSecure(ssl.serverSocketFactory,arrayOf("TLSv1.2"))
@@ -55,11 +63,12 @@ class PairServer(private val diagnostic:(String)->Unit = {}, val receive:(JSONOb
  }
  fun link(host:String)=Link(host,listeningPort,pin,gate.code)
  @Synchronized override fun serve(s:IHTTPSession):Response = try {
-  AppLog.add("TV request: "+when(s.uri){"/pair"->"pair";"/session"->"session";else->"unknown route"})
+  AppLog.add("TV request: "+when(s.uri){"/health"->"local TLS self-test";"/pair"->"pair";"/session"->"session";else->"unknown route"})
   require(s.method==Method.POST)
   require((s.headers["content-length"]?.toLongOrNull() ?: 0) in 1..16384)
   val data=mutableMapOf<String,String>(); s.parseBody(data); val j=JSONObject(data["postData"] ?: "{}")
-  if(s.uri=="/pair") { if(!gate.consume(j.optString("code"))) newFixedLengthResponse(Response.Status.FORBIDDEN,"text/plain","Pairing expired or rejected") else newFixedLengthResponse(JSONObject().put("auth",auth).toString()) }
+  if(s.uri=="/health") newFixedLengthResponse("{\"ready\":true}")
+  else if(s.uri=="/pair") { if(!gate.consume(j.optString("code"))) newFixedLengthResponse(Response.Status.FORBIDDEN,"text/plain","Pairing expired or rejected") else newFixedLengthResponse(JSONObject().put("auth",auth).toString()) }
   else if(s.headers["authorization"]!="Bearer $auth") newFixedLengthResponse(Response.Status.FORBIDDEN,"text/plain","Rejected")
   else { require(s.uri=="/session"); val id=j.getString("requestId"); if(id !in seen) { receive(j); seen.add(id) }; newFixedLengthResponse("{}") }
  } catch(e:Exception) { newFixedLengthResponse(Response.Status.BAD_REQUEST,"text/plain","Invalid request") }
@@ -73,11 +82,12 @@ class Connection(val link:Link) {
  }
  private val ssl=SSLContext.getInstance("TLS").apply{init(null,arrayOf(trust),SecureRandom())}
  private val client=OkHttpClient.Builder().eventListener(object:EventListener(){
-  override fun secureConnectStart(call:Call){AppLog.add("Phone: starting TLS handshake")}
-  override fun secureConnectEnd(call:Call,handshake:Handshake?){AppLog.add("Phone: TLS established (${handshake?.tlsVersion?.javaName}, ${handshake?.cipherSuite?.javaName})")}
-  override fun callFailed(call:Call,ioe:java.io.IOException){AppLog.add("Phone: local request failed: "+tlsDetails(ioe))}
+  override fun secureConnectStart(call:Call){AppLog.add("TLS client: starting handshake")}
+  override fun secureConnectEnd(call:Call,handshake:Handshake?){AppLog.add("TLS client: established (${handshake?.tlsVersion?.javaName}, ${handshake?.cipherSuite?.javaName})")}
+  override fun callFailed(call:Call,ioe:java.io.IOException){AppLog.add("TLS client: request failed: "+tlsDetails(ioe))}
  }).sslSocketFactory(ssl.socketFactory,trust).hostnameVerifier{host,_->host==link.host}.followRedirects(false).build()
  fun post(path:String,j:JSONObject):JSONObject = client.newCall(Request.Builder().url("https://${link.host}:${link.port}/$path").header("Authorization","Bearer $auth").post(j.toString().toRequestBody("application/json".toMediaType())).build()).execute().use { require(it.isSuccessful){"TV connection rejected. Pair again."}; JSONObject(it.body!!.string()) }
+ fun probe(){require(post("health",JSONObject()).getBoolean("ready"))}
  fun pair(){
   AppLog.add("Phone: pairing request started")
   try { auth=post("pair",JSONObject().put("code",link.code)).getString("auth"); AppLog.add("Phone: pairing accepted") }

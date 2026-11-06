@@ -29,6 +29,7 @@ class PairingTlsTest {
    val wrongPin=Connection(link.copy(pin="0".repeat(64)))
    assertThrows(java.io.IOException::class.java){wrongPin.pair()}
    val phone=Connection(link)
+   phone.probe()
    phone.pair()
    assertTrue(phone.auth.isNotBlank())
    assertFalse(ks.containsAlias(old))

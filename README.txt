@@ -100,3 +100,13 @@ Android logcat under AlbumBeam. They exclude Google tokens, QR secrets, media
 URLs, selected filenames and session IDs. TLS exceptions include their nested
 causes to help diagnose the S24 Ultra / Philips TV handshake failure, which is
 not yet confirmed fixed. Send the phone and TV logs after reproducing the issue.
+
+TV self-test in v0.1.3
+The TV now binds its exact private-key handle and certificate chain to TLS
+explicitly, avoiding key-manager provider enumeration that can silently skip
+Android Keystore identities. At startup and after End / Pair again it makes a
+certificate-pinned HTTPS request to its own loopback interface. This does not
+consume the QR secret and exposes no photos or credentials. The activity log
+records local TLS self-test PASSED or FAILED. Phone-to-TV connectivity still
+needs checking on hardware; a passing loopback test checks only the local stack.
+Server socket failures are also logged even when they are not SSLException.
