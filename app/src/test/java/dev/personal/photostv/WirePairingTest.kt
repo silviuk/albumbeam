@@ -87,6 +87,27 @@ class WirePairingTest {
    assertEquals("",phone.post("log-inbox",JSONObject().put("after",inbox.getLong("serial"))).getString("report"))
   }finally{server.stop()}
  }
+ @Test fun remoteControlsRequirePairingAndRejectUnknownActions(){
+  val commands=mutableListOf<RemoteAction>()
+  val server=PairServer(control={commands.add(it)}){}
+  try{
+   server.start();val phone=Connection(server.link("127.0.0.1"))
+   val command=JSONObject().put("action","play").put("requestId","play-once")
+   assertThrows(IllegalArgumentException::class.java){phone.post("control",command)}
+   assertTrue(commands.isEmpty());phone.pair();phone.post("control",command)
+   assertEquals(listOf(RemoteAction.PLAY),commands)
+   assertThrows(IllegalArgumentException::class.java){phone.post("control",JSONObject().put("action","unknown").put("requestId","bad"))}
+   assertEquals(1,commands.size)
+  }finally{server.stop()}
+ }
+ @Test fun retriedCommandsAreExecutedOnlyOnce(){
+  var count=0;val server=PairServer(control={count++}){}
+  try{server.start();val phone=Connection(server.link("127.0.0.1"));phone.pair();val command=JSONObject().put("action","next").put("requestId","repeat");phone.post("control",command);phone.post("control",command);assertEquals(1,count)}finally{server.stop()}
+ }
+ @Test fun pairedPhoneReceivesPlaybackState(){
+  val server=PairServer(state={"5 items • Playing"}){}
+  try{server.start();val phone=Connection(server.link("127.0.0.1"));phone.pair();assertEquals("5 items • Playing",phone.post("log-inbox",JSONObject()).getString("state"))}finally{server.stop()}
+ }
  @Test fun eachServerGetsANewPinnedIdentity(){
   val first=PairServer{};val second=PairServer{}
   try{assertNotEquals(first.pin,second.pin)}finally{first.stop();second.stop()}

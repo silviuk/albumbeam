@@ -11,6 +11,13 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.IntentSenderRequest
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.foundation.background
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Alignment
@@ -62,6 +69,15 @@ class MainActivity:ComponentActivity() {
  private val nearby by lazy{NearbyPairing(this)}
  private var manualDisplay by mutableStateOf("")
  private var verificationDisplay by mutableStateOf("")
+ private var remoteCommandHandler:((RemoteAction)->Unit)?=null
+ private var videoControl:((String)->Unit)?=null
+ @Volatile private var remoteSummary="No media selected"
+ private var tvState by mutableStateOf("")
+ private fun sendControl(action:RemoteAction){task{
+  val c=connection ?: error("Pair with your TV first")
+  withContext(Dispatchers.IO){c.post("control",JSONObject().put("action",action.wire).put("requestId",UUID.randomUUID().toString()))}
+  AppLog.add("Phone: TV command sent (${action.wire})")
+ }}
  private var pickerLink by mutableStateOf("")
  private var pickerOnComputer=false
  private var tvReport by mutableStateOf("")
@@ -82,6 +98,7 @@ class MainActivity:ComponentActivity() {
     try{
      val reply=withContext(Dispatchers.IO){c.post("log-inbox",JSONObject().put("after",serial))}
      serial=reply.optLong("serial",serial)
+     tvState=reply.optString("state")
      val report=reply.optString("report")
      if(report.isNotBlank()){tvReport=report;AppLog.add("Phone: TV diagnostic report received")}
     }catch(e:Exception){if(e is CancellationException)throw e;delay(10000)}
@@ -102,7 +119,7 @@ class MainActivity:ComponentActivity() {
  }
  fun task(block:suspend ()->Unit) { lifecycleScope.launch { try{block()}catch(e:CancellationException){throw e}catch(e:Exception){status=e.message ?: "Connection failed. Retry when online."; AppLog.add("Operation failed (${e.javaClass.simpleName}); see screen for details")} } }
  fun pairing() {
-  nearby.stopAdvertising();server?.stop(); server=PairServer(diagnostic={message -> runOnUiThread{status=message.take(450)}}) { j -> runOnUiThread { AppLog.add("TV: received selection authorization from companion"); val next=j.getString("session"); if(session.isNotBlank() && next!=session) end(false); token=j.getString("token"); session=next; qr=null; load() } }
+  nearby.stopAdvertising();server?.stop(); server=PairServer(diagnostic={message -> runOnUiThread{status=message.take(450)}},control={action->runOnUiThread{remoteCommandHandler?.invoke(action)}},state={remoteSummary}) { j -> runOnUiThread { AppLog.add("TV: received selection authorization from companion"); val next=j.getString("session"); if(session.isNotBlank() && next!=session) end(false); token=j.getString("token"); session=next; qr=null; load() } }
   try { server!!.start(); AppLog.add("TV: secure pairing server started; QR valid for five minutes"); val host=localAddress() ?: error("Connect the TV to your home network, then retry.")
    manualDisplay=server!!.manualCode;verificationDisplay=verification(server!!.pin)
    runCatching{nearby.advertise(server!!.listeningPort,server!!.pin)}.onFailure{AppLog.add("TV: discovery unavailable; QR still works")}
@@ -174,7 +191,7 @@ class MainActivity:ComponentActivity() {
   if(oldToken.isNotBlank() && oldSession.isNotBlank()) lifecycleScope.launch(Dispatchers.IO){runCatching{api(oldToken,"sessions/$oldSession","DELETE")}}
   AppLog.add("Session ended; local state cleared; remote deletion is best effort"); status="Session ended"; if(reset) pairing()
  }
- @Composable fun Action(label:String,onClick:()->Unit) { if(BuildConfig.FLAVOR=="tv") androidx.tv.material3.Button(onClick=onClick){Text(label)} else Button(onClick=onClick){Text(label)} }
+ @Composable fun Action(label:String,modifier:Modifier=Modifier,onClick:()->Unit) { if(BuildConfig.FLAVOR=="tv") androidx.tv.material3.Button(onClick=onClick,modifier=modifier){Text(label)} else Button(onClick=onClick,modifier=modifier){Text(label)} }
 
  @Composable fun ActivityLog(){
   var expanded by remember{mutableStateOf(false)}
@@ -194,6 +211,13 @@ class MainActivity:ComponentActivity() {
   Text("AlbumBeam Companion v${BuildConfig.VERSION_NAME}",style=MaterialTheme.typography.headlineMedium); Text("Connect both devices to your home network. Search by album title in Google Photos, then select photos and videos.")
   Text(status)
   ActivityLog()
+  if(connection!=null){
+   Text("TV controls",style=MaterialTheme.typography.titleLarge)
+   Text(tvState.ifBlank{"Connected to TV"})
+   Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){Action("Previous"){sendControl(RemoteAction.PREVIOUS)};Action("Next"){sendControl(RemoteAction.NEXT)}}
+   Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){Action("Play"){sendControl(RemoteAction.PLAY)};Action("Pause"){sendControl(RemoteAction.PAUSE)};Action("Stop"){sendControl(RemoteAction.STOP)}}
+   Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){Action("Start slideshow"){sendControl(RemoteAction.START_SLIDESHOW)};Action("Stop slideshow"){sendControl(RemoteAction.STOP_SLIDESHOW)}}
+  }
   if(connection!=null)Action("Get detailed TV log"){task{val reply=withContext(Dispatchers.IO){connection!!.post("logs",JSONObject())};tvReport=reply.getString("report");AppLog.add("Phone: TV diagnostic report fetched")}}
   if(tvReport.isNotBlank()){
    Text("TV diagnostic report received")
@@ -255,10 +279,23 @@ class MainActivity:ComponentActivity() {
  }
  @Composable fun TV() {
   var qualityOpen by remember{mutableStateOf(false)}
+  var fastStartup by remember{mutableStateOf(true)}
   var photoQuality by remember{mutableStateOf(PhotoQuality.SCREEN)}
   var fullQr by remember{mutableStateOf(false)}
   var showCode by remember{mutableStateOf(false)}
   var selected by remember { mutableIntStateOf(-1) }; var slideshow by remember { mutableStateOf(false) }; var loaded by remember(selected) { mutableStateOf(false) }; var retryCount by remember { mutableIntStateOf(0) }
+  val idleControls=remember{IdleControls()}
+  var controlsVisible by remember{mutableStateOf(true)}
+  var controlActivity by remember{mutableLongStateOf(0L)}
+  var restoreControlFocus by remember{mutableStateOf(false)}
+  var playerState by remember(selected){mutableStateOf("")}
+  val viewerFocus=remember{FocusRequester()};val firstControlFocus=remember{FocusRequester()}
+  fun activity(focus:Boolean=false){val hidden=!controlsVisible;controlsVisible=true;controlActivity=idleControls.touch();if(hidden && focus)restoreControlFocus=true}
+  LaunchedEffect(selected<0){if(selected>=0)activity()else qualityOpen=false}
+  LaunchedEffect(selected,controlActivity,qualityOpen){
+   if(selected>=0 && !qualityOpen){val expected=controlActivity;delay(idleControls.timeoutMillis);if(idleControls.shouldHide(expected,qualityOpen)){controlsVisible=false;if(items.getOrNull(selected)?.optString("type")!="VIDEO")runCatching{viewerFocus.requestFocus()}}}
+  }
+  LaunchedEffect(controlsVisible,restoreControlFocus){if(controlsVisible && restoreControlFocus){withFrameNanos{};runCatching{firstControlFocus.requestFocus()};restoreControlFocus=false}}
   var qualityInfo by remember(selected){mutableStateOf("")}
   var videoOptions by remember(selected){mutableStateOf<List<VideoQualityOption>>(emptyList())}
   val context=LocalContext.current
@@ -266,6 +303,25 @@ class MainActivity:ComponentActivity() {
   DisposableEffect(loader){onDispose{loader.shutdown()}}
   LaunchedEffect(items.isEmpty()){if(items.isEmpty()){selected=-1;slideshow=false}}
   fun advance(){ if(items.isNotEmpty()) selected=(selected+1)%items.size }
+  SideEffect{
+   remoteSummary="${items.size} items • "+(if(selected<0) "Grid" else "Item ${selected+1} • $playerState")+(if(slideshow) " • Slideshow" else "")
+   remoteCommandHandler={command->
+    AppLog.add("TV remote command: ${command.wire}")
+    if(items.isEmpty()){status="Select photos or videos before using playback controls."}
+    else{
+     activity();qualityOpen=false
+     when(command){
+      RemoteAction.NEXT->{slideshow=false;advance()}
+      RemoteAction.PREVIOUS->{slideshow=false;selected=if(selected<0)items.lastIndex else (selected-1+items.size)%items.size}
+      RemoteAction.PLAY->{if(selected<0)selected=0;if(items.getOrNull(selected)?.optString("type")=="VIDEO")videoControl?.invoke("play")else slideshow=true}
+      RemoteAction.PAUSE->{slideshow=false;videoControl?.invoke("pause")}
+      RemoteAction.STOP->{slideshow=false;selected=-1}
+      RemoteAction.START_SLIDESHOW->{slideshow=true;if(selected<0)selected=0;videoControl?.invoke("play")}
+      RemoteAction.STOP_SLIDESHOW->{slideshow=false}
+     }
+    }
+   }
+  }
   LaunchedEffect(selected,slideshow,loaded){if(slideshow && loaded && selected>=0 && items.getOrNull(selected)?.getString("type")!="VIDEO"){delay(10_000);advance()}}
   if(fullQr && qr!=null)Dialog(onDismissRequest={fullQr=false},properties=DialogProperties(usePlatformDefaultWidth=false,decorFitsSystemWindows=false)){
    Box(Modifier.fillMaxSize().background(Color.White)){
@@ -302,15 +358,26 @@ class MainActivity:ComponentActivity() {
   }
   items.getOrNull(selected)?.let { item ->
    Dialog(onDismissRequest={selected=-1;slideshow=false},properties=DialogProperties(usePlatformDefaultWidth=false,decorFitsSystemWindows=false)){
-    Box(Modifier.fillMaxSize().background(Color.Black)){
+    Box(Modifier.fillMaxSize().background(Color.Black)
+     .onPreviewKeyEvent{event->
+      val key=event.nativeKeyEvent
+      if(key.action==android.view.KeyEvent.ACTION_DOWN && key.keyCode!=android.view.KeyEvent.KEYCODE_BACK){
+       val hidden=!controlsVisible
+       val navigation=key.keyCode in listOf(19,20,21,22,23,66)
+       activity(hidden && navigation)
+       hidden && navigation
+      }else false
+     }
+     .pointerInput(Unit){awaitPointerEventScope{while(true){val event=awaitPointerEvent(PointerEventPass.Initial);if(event.type==PointerEventType.Press || event.changes.any{it.pressed})activity()}}}
+     .focusRequester(viewerFocus).focusable()){
      val file=item.getJSONObject("mediaFile")
-     if(item.getString("type")=="VIDEO")key(file.optString("baseUrl"),token,retryCount){
-      VideoViewer(file,token,Modifier.fillMaxSize(),onInfo={qualityInfo=it},onOptions={videoOptions=it},onEnded={if(slideshow)advance()},onInteraction={slideshow=false},onFailure={message->status=message})
+     if(item.getString("type")=="VIDEO")key(file.optString("baseUrl"),token,retryCount,fastStartup){
+      VideoViewer(file,token,Modifier.fillMaxSize(),fastStartup=fastStartup,controlsVisible=controlsVisible,onActivity={focus->activity(focus)},onControlReady={videoControl=it},onState={playerState=it},onInfo={qualityInfo=it},onOptions={videoOptions=it},onEnded={if(slideshow)advance()},onInteraction={slideshow=false},onFailure={message->status=message})
      }else key(file.optString("baseUrl"),token,retryCount,photoQuality){
       PhotoViewer(file,token,loader,Modifier.fillMaxSize(),quality=photoQuality,onInfo={qualityInfo=it},onLoaded={loaded=true},onFailure={status=it})
      }
-     Row(Modifier.align(Alignment.TopCenter).fillMaxWidth().background(Color.Black.copy(alpha=0.75f)).horizontalScroll(rememberScrollState()).padding(8.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)){
-      Action("Previous"){slideshow=false;selected=(selected-1+items.size)%items.size}
+     if(controlsVisible)Row(Modifier.align(Alignment.TopCenter).fillMaxWidth().background(Color.Black.copy(alpha=0.75f)).horizontalScroll(rememberScrollState()).padding(8.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)){
+      Action("Previous",modifier=Modifier.focusRequester(firstControlFocus)){slideshow=false;selected=(selected-1+items.size)%items.size}
       Action("Next"){slideshow=false;advance()}
       Action(if(slideshow) "Pause slideshow" else "Slideshow"){slideshow=!slideshow}
       Action("Retry"){retryCount++;loaded=false;qualityInfo="";videoOptions=emptyList();load()}
@@ -323,6 +390,8 @@ class MainActivity:ComponentActivity() {
       Text("Source metadata: ${sourceDimensions(file)} • ${file.optString("mimeType")}")
       Text(qualityInfo.ifBlank{"Waiting for decoded media details…"})
       if(item.getString("type")=="VIDEO"){
+       Text("Fast startup: ${if(fastStartup) "On" else "Off"}. Skipping an optional seek index can limit seeking on some videos.")
+       Action(if(fastStartup) "Restart with seek index" else "Restart with fast startup"){fastStartup=!fastStartup;qualityInfo="";videoOptions=emptyList();qualityOpen=false}
        Text("Google supplies a transcoded video. Original-file video download and a server resolution selector are unavailable. Source metadata does not prove delivered playback quality.")
        if(videoOptions.size>1){Text("Available supported video tracks:");videoOptions.forEach{option->Action((if(option.selected) "✓ " else "")+option.label){option.choose();qualityOpen=false}}}
        else if(videoOptions.size==1)Text("One supported rendition: ${videoOptions.single().label}. No alternate stream quality is available.")
@@ -337,5 +406,5 @@ class MainActivity:ComponentActivity() {
    }
   }
  }
- override fun onDestroy(){logReceiver?.cancel();nearby.close();networkWatch?.cancel();if(BuildConfig.FLAVOR=="tv")end(false);token="";server?.stop();connection=null;super.onDestroy()}
+ override fun onDestroy(){remoteCommandHandler=null;videoControl=null;logReceiver?.cancel();nearby.close();networkWatch?.cancel();if(BuildConfig.FLAVOR=="tv")end(false);token="";server?.stop();connection=null;super.onDestroy()}
 }

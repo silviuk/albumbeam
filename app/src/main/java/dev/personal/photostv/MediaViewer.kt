@@ -19,6 +19,7 @@ import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import coil.ImageLoader
@@ -127,8 +128,9 @@ private class PhotoSurface(context:Context,private val pixels:PhotoPixels):Surfa
 }
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-@Composable fun VideoViewer(file:JSONObject,token:String,modifier:Modifier,onInfo:(String)->Unit,onOptions:(List<VideoQualityOption>)->Unit,onEnded:()->Unit,onInteraction:()->Unit,onFailure:(String)->Unit){
+@Composable fun VideoViewer(file:JSONObject,token:String,modifier:Modifier,fastStartup:Boolean,controlsVisible:Boolean,onActivity:(Boolean)->Unit,onControlReady:(((String)->Unit)?)->Unit,onState:(String)->Unit,onInfo:(String)->Unit,onOptions:(List<VideoQualityOption>)->Unit,onEnded:()->Unit,onInteraction:()->Unit,onFailure:(String)->Unit){
  val context=LocalContext.current
+ val chromeNow by rememberUpdatedState(controlsVisible);val activityCallback by rememberUpdatedState(onActivity);val controlCallback by rememberUpdatedState(onControlReady);val stateCallback by rememberUpdatedState(onState)
  val infoCallback by rememberUpdatedState(onInfo);val optionsCallback by rememberUpdatedState(onOptions)
  var decoded by remember{mutableStateOf("Decoded resolution: waiting for playback")};var trackInfo by remember{mutableStateOf("")}
  val ended by rememberUpdatedState(onEnded);val interacted by rememberUpdatedState(onInteraction);val failed by rememberUpdatedState(onFailure)
@@ -146,14 +148,20 @@ private class PhotoSurface(context:Context,private val pixels:PhotoPixels):Surfa
   AppLog.add("Video: preparing progressive playback; processing=${processing.ifBlank{"unspecified"}}; MIME=${file.optString("mimeType")}")
   val http=OkHttpClient.Builder().followRedirects(true).followSslRedirects(false)
    .connectTimeout(20,TimeUnit.SECONDS).readTimeout(60,TimeUnit.SECONDS)
-   .addNetworkInterceptor{chain->val response=chain.proceed(chain.request());AppLog.add("Video HTTP ${response.code}; content-type=${response.header("Content-Type")}; content-length=${response.header("Content-Length")}; ranged=${chain.request().header("Range")!=null}");response}.build()
+   .addNetworkInterceptor{chain->val response=chain.proceed(chain.request());AppLog.add("Video HTTP ${response.code}; content-type=${response.header("Content-Type")}; length=${response.header("Content-Length")}; requested-range=${chain.request().header("Range") ?: "none"}; content-range=${response.header("Content-Range") ?: "none"}; accept-ranges=${response.header("Accept-Ranges") ?: "unspecified"}; TTFB=${response.receivedResponseAtMillis-response.sentRequestAtMillis}ms");response}.build()
   val source=OkHttpDataSource.Factory(http).setDefaultRequestProperties(mapOf("Authorization" to "Bearer $token")).setUserAgent("AlbumBeam/${BuildConfig.VERSION_NAME}")
-  ExoPlayer.Builder(context,DefaultRenderersFactory(context).setEnableDecoderFallback(true)).setMediaSourceFactory(DefaultMediaSourceFactory(source)).build()
+  ExoPlayer.Builder(context,DefaultRenderersFactory(context).setEnableDecoderFallback(true))
+   .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(5000,20000,750,1500).setPrioritizeTimeOverSizeThresholds(true).build())
+   .setMediaSourceFactory(DefaultMediaSourceFactory(source,streamingExtractors(fastStartup))).build()
  }
  DisposableEffect(player){
+  val startTime=android.os.SystemClock.elapsedRealtime()
+  AppLog.add("Video: direct Google streaming; fast startup=$fastStartup; startup buffer 750ms; no local transcode")
+  controlCallback{action->when(action){"play"->{if(player.playbackState==Player.STATE_ENDED)player.seekTo(0);player.play()};"pause"->player.pause()}}
   val listener=object:Player.Listener{
    override fun onPlaybackStateChanged(state:Int){
     AppLog.add("Video playback state: "+when(state){Player.STATE_BUFFERING->"BUFFERING";Player.STATE_READY->"READY";Player.STATE_ENDED->"ENDED";else->"IDLE"})
+    stateCallback(when(state){Player.STATE_BUFFERING->"Buffering";Player.STATE_READY->if(player.playWhenReady) "Playing" else "Paused";Player.STATE_ENDED->"Ended";else->"Idle"})
     message=if(state==Player.STATE_BUFFERING) "Buffering video…" else ""
     if(state==Player.STATE_ENDED)ended()
    }
@@ -178,21 +186,31 @@ private class PhotoSurface(context:Context,private val pixels:PhotoPixels):Surfa
     }
     infoCallback("Google-provided transcode\n$decoded\n$trackInfo\n$outputInfo")
    }
-   override fun onPlayWhenReadyChanged(ready:Boolean,reason:Int){if(reason==Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)interacted()}
+   override fun onPlayWhenReadyChanged(ready:Boolean,reason:Int){stateCallback(if(!ready) "Paused" else if(player.playbackState==Player.STATE_READY) "Playing" else "Buffering");if(reason==Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)interacted()}
    override fun onPositionDiscontinuity(oldPosition:Player.PositionInfo,newPosition:Player.PositionInfo,reason:Int){if(reason==Player.DISCONTINUITY_REASON_SEEK)interacted()}
    override fun onPlayerError(error:PlaybackException){message="Video failed: ${mediaError(error)}. Retry to refresh access, or send TV log to phone.";AppLog.add(message);failed(message)}
   }
   player.trackSelectionParameters=player.trackSelectionParameters.buildUpon().setForceHighestSupportedBitrate(true).build()
   player.addAnalyticsListener(object:androidx.media3.exoplayer.analytics.AnalyticsListener{
    override fun onVideoDecoderInitialized(eventTime:androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,decoderName:String,initializedTimestampMs:Long,initializationDurationMs:Long){AppLog.add("Video decoder initialized: $decoderName (${initializationDurationMs}ms)")}
-   override fun onRenderedFirstFrame(eventTime:androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,output:Any,renderTimeMs:Long){AppLog.add("Video: first frame rendered")}
+   override fun onRenderedFirstFrame(eventTime:androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,output:Any,renderTimeMs:Long){AppLog.add("Video: first frame rendered after ${android.os.SystemClock.elapsedRealtime()-startTime}ms")}
   })
   player.addListener(listener)
   player.setMediaItem(MediaItem.fromUri(file.getString("baseUrl")+"=dv"));player.prepare();player.playWhenReady=true
-  onDispose{player.removeListener(listener);player.release()}
+  onDispose{controlCallback(null);player.removeListener(listener);player.release()}
  }
  Box(modifier.background(Color.Black)){
-  AndroidView(factory={PlayerView(it).apply{this.player=player;useController=true;requestFocus()}},modifier=Modifier.fillMaxSize())
+  AndroidView(factory={PlayerView(it).apply{
+   this.player=player;useController=true;controllerShowTimeoutMs=3000;controllerAutoShow=false
+   setOnKeyListener{_,code,event->
+    if(event.action==android.view.KeyEvent.ACTION_DOWN && code!=android.view.KeyEvent.KEYCODE_BACK){
+     val hidden=!chromeNow;val navigation=code in listOf(19,20,21,22,23,66)
+     activityCallback(hidden && navigation)
+     hidden && navigation
+    }else false
+   }
+   requestFocus()
+  }},update={view->if(!controlsVisible){view.hideController();if(!view.hasFocus())view.requestFocus()}},modifier=Modifier.fillMaxSize())
   if(message.isNotBlank())Text(message,Modifier.padding(top=100.dp,start=24.dp))
  }
 }

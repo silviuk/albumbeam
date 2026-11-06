@@ -17,10 +17,11 @@ fun api(token:String,path:String,method:String="GET",body:JSONObject?=null):JSON
  if(method!="GET") b.method(method,if(method=="POST") (body?.toString() ?: "{}").toRequestBody("application/json".toMediaType()) else null)
  googleHttp.newCall(b.build()).execute().use { r -> AppLog.add("Google response HTTP ${r.code}"); if(!r.isSuccessful) error("Google ${r.code}: "+when(r.code){401->"Reconnect phone";403->"Access denied; reconnect or select again";404->"Selection expired; select again";else->"Retry when online"}); return JSONObject(r.body?.string().orEmpty().ifBlank{"{}"}) }
 }
-class PairServer(private val diagnostic:(String)->Unit = {}, val receive:(JSONObject)->Unit):NanoHTTPD(0) {
+class PairServer(private val diagnostic:(String)->Unit = {},private val control:(RemoteAction)->Unit = {},private val state:()->String = {""}, val receive:(JSONObject)->Unit):NanoHTTPD(0) {
  private val manualGate=ManualGate()
  val manualCode get()=manualGate.code
  private var paired=false
+ private val commandIds=linkedSetOf<String>()
  private var reportSerial=0L
  private var pendingReport=""
  @Synchronized fun sendLogToPhone(){pendingReport=AppLog.export();reportSerial++;AppLog.add("TV: diagnostic report queued for paired phone")}
@@ -63,7 +64,7 @@ class PairServer(private val diagnostic:(String)->Unit = {}, val receive:(JSONOb
  }
  fun link(host:String)=Link(host,listeningPort,pin,gate.code)
  @Synchronized override fun serve(s:IHTTPSession):Response = try {
-  if(s.uri!="/log-inbox")AppLog.add("TV request: "+when(s.uri){"/health"->"local TLS self-test";"/pair"->"pair";"/manual-pair"->"manual pair";"/logs"->"diagnostic report";"/session"->"session";else->"unknown route"})
+  if(s.uri!="/log-inbox")AppLog.add("TV request: "+when(s.uri){"/health"->"local TLS self-test";"/pair"->"pair";"/manual-pair"->"manual pair";"/control"->"remote control";"/logs"->"diagnostic report";"/session"->"session";else->"unknown route"})
   require(s.method==Method.POST)
   require((s.headers["content-length"]?.toLongOrNull() ?: 0) in 1..16384)
   val data=mutableMapOf<String,String>(); s.parseBody(data); val j=JSONObject(data["postData"] ?: "{}")
@@ -74,8 +75,14 @@ class PairServer(private val diagnostic:(String)->Unit = {}, val receive:(JSONOb
    else {paired=true;newFixedLengthResponse(JSONObject().put("auth",auth).toString())}
   }
   else if(s.headers["authorization"]!="Bearer $auth") newFixedLengthResponse(Response.Status.FORBIDDEN,"text/plain","Rejected")
+  else if(s.uri=="/control"){
+   val action=requireNotNull(RemoteAction.parse(j.optString("action")))
+   val id=j.getString("requestId");require(id.isNotBlank() && id.length<=128)
+   if(commandIds.add(id)){control(action);if(commandIds.size>256)commandIds.remove(commandIds.first())}
+   newFixedLengthResponse(JSONObject().put("accepted",true).toString())
+  }
   else if(s.uri=="/logs")newFixedLengthResponse(JSONObject().put("report",AppLog.export()).toString())
-  else if(s.uri=="/log-inbox")newFixedLengthResponse(JSONObject().put("serial",reportSerial).put("report",if(j.optLong("after",0)<reportSerial)pendingReport else "").toString())
+  else if(s.uri=="/log-inbox")newFixedLengthResponse(JSONObject().put("serial",reportSerial).put("state",state()).put("report",if(j.optLong("after",0)<reportSerial)pendingReport else "").toString())
   else { require(s.uri=="/session"); val id=j.getString("requestId"); if(id !in seen) { receive(j); seen.add(id) }; newFixedLengthResponse("{}") }
  } catch(e:Exception) { newFixedLengthResponse(Response.Status.BAD_REQUEST,"text/plain","Invalid request") }
 }

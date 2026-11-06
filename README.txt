@@ -183,3 +183,29 @@ buttons appear only if multiple supported video tracks actually exist; a single
 Google rendition cannot be turned into an original-quality/4K stream by the app.
 Decoder initialization and first rendered frame are logged. Google video download
 remains a transcoded rendition; no API flag selects original video bytes.
+
+Remote controls and streaming startup in v0.1.8
+The viewer's top toolbar hides after three seconds without remote/touch/phone
+input. A navigation/OK press reveals it before activating a toolbar action.
+Video controls also use a three-second timeout. Quality dialogs remain visible.
+Phone TV controls include Previous, Next, Play, Pause, Stop (return to grid),
+Start slideshow and Stop slideshow (stop automatic advance). State is refreshed
+about every five seconds. Commands require the existing authenticated/pinned
+pairing and have request IDs to prevent duplicate execution during retries.
+Update both apps for phone controls; Google Cloud settings stay unchanged.
+
+Video bytes still stream directly from Google's supported =dv endpoint. AlbumBeam
+performs no transcoding and adds no full-file pre-download. Google supplies that
+rendition; the Photos API cannot switch to original-file video streaming.
+The streaming extractor omits optional MP4 tail seek-map/GOP scans that can cause
+expensive restarts when the server ignores Range. Startup buffering is 750ms,
+rebuffering 1500ms, with a 5–20 second forward buffer; video quality is unchanged.
+Logs now include Range/Content-Range, Accept-Ranges, response timing and time to
+first rendered frame. MP4 files with essential metadata at the end may still need
+an initial seek, and the API/CDN can impose unavoidable latency. Full-file-byte
+preservation with different delivery requires another source outside this API.
+
+Quality & info also offers Restart with seek index / Restart with fast startup.
+Fast startup skips optional fragmented-MP4 seek indexing, which can limit seeking
+on such files. Use seek-index mode to restore the original indexing behavior.
+This restarts the current video; neither mode transcodes or reduces quality.

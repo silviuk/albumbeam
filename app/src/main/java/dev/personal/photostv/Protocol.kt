@@ -33,3 +33,17 @@ class ManualGate(private val now:()->Long=System::currentTimeMillis){
  }
 }
 fun verification(pin:String)=pin.take(16).uppercase(java.util.Locale.ROOT).chunked(4).joinToString("-")
+
+enum class RemoteAction(val wire:String){
+ PREVIOUS("previous"),NEXT("next"),PLAY("play"),PAUSE("pause"),STOP("stop"),START_SLIDESHOW("start-slideshow"),STOP_SLIDESHOW("stop-slideshow");
+ companion object{fun parse(value:String)=entries.firstOrNull{it.wire==value}}
+}
+
+/** Monotonic timer; a stale hide callback may never hide controls after new input. */
+class IdleControls(private val now:()->Long={System.nanoTime()/1_000_000}){
+ val timeoutMillis=3000L
+ private var generation=0L
+ private var lastInput=now()
+ @Synchronized fun touch():Long{lastInput=now();return ++generation}
+ @Synchronized fun shouldHide(expected:Long,panelOpen:Boolean=false)=!panelOpen && expected==generation && now()-lastInput>=timeoutMillis
+}
