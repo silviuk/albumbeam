@@ -18,6 +18,9 @@ fun api(token:String,path:String,method:String="GET"):JSONObject {
  googleHttp.newCall(b.build()).execute().use { r -> AppLog.add("Google response HTTP ${r.code}"); if(!r.isSuccessful) error("Google ${r.code}: "+when(r.code){401->"Reconnect phone";403->"Access denied; reconnect or select again";404->"Selection expired; select again";else->"Retry when online"}); return JSONObject(r.body?.string().orEmpty().ifBlank{"{}"}) }
 }
 class PairServer(private val diagnostic:(String)->Unit = {}, val receive:(JSONObject)->Unit):NanoHTTPD(0) {
+ private val manualGate=ManualGate()
+ val manualCode get()=manualGate.code
+ private var paired=false
  private val gate=PairGate(); private val auth=secret(); private val seen=mutableSetOf<String>()
  val pin:String
  private val logger=java.util.logging.Logger.getLogger(NanoHTTPD::class.java.name)
@@ -57,12 +60,16 @@ class PairServer(private val diagnostic:(String)->Unit = {}, val receive:(JSONOb
  }
  fun link(host:String)=Link(host,listeningPort,pin,gate.code)
  @Synchronized override fun serve(s:IHTTPSession):Response = try {
-  AppLog.add("TV request: "+when(s.uri){"/health"->"local TLS self-test";"/pair"->"pair";"/session"->"session";else->"unknown route"})
+  AppLog.add("TV request: "+when(s.uri){"/health"->"local TLS self-test";"/pair"->"pair";"/manual-pair"->"manual pair";"/session"->"session";else->"unknown route"})
   require(s.method==Method.POST)
   require((s.headers["content-length"]?.toLongOrNull() ?: 0) in 1..16384)
   val data=mutableMapOf<String,String>(); s.parseBody(data); val j=JSONObject(data["postData"] ?: "{}")
   if(s.uri=="/health") newFixedLengthResponse("{\"ready\":true}")
-  else if(s.uri=="/pair") { if(!gate.consume(j.optString("code"))) newFixedLengthResponse(Response.Status.FORBIDDEN,"text/plain","Pairing expired or rejected") else newFixedLengthResponse(JSONObject().put("auth",auth).toString()) }
+  else if(s.uri=="/pair" || s.uri=="/manual-pair") {
+   val accepted=!paired && if(s.uri=="/pair")gate.consume(j.optString("code")) else manualGate.consume(j.optString("code"))
+   if(!accepted)newFixedLengthResponse(Response.Status.FORBIDDEN,"text/plain","Pairing expired, locked or rejected")
+   else {paired=true;newFixedLengthResponse(JSONObject().put("auth",auth).toString())}
+  }
   else if(s.headers["authorization"]!="Bearer $auth") newFixedLengthResponse(Response.Status.FORBIDDEN,"text/plain","Rejected")
   else { require(s.uri=="/session"); val id=j.getString("requestId"); if(id !in seen) { receive(j); seen.add(id) }; newFixedLengthResponse("{}") }
  } catch(e:Exception) { newFixedLengthResponse(Response.Status.BAD_REQUEST,"text/plain","Invalid request") }
@@ -82,9 +89,9 @@ class Connection(val link:Link) {
  }).sslSocketFactory(ssl.socketFactory,trust).hostnameVerifier{host,_->host==link.host}.followRedirects(false).build()
  fun post(path:String,j:JSONObject):JSONObject = client.newCall(Request.Builder().url("https://${link.host}:${link.port}/$path").header("Authorization","Bearer $auth").post(j.toString().toRequestBody("application/json".toMediaType())).build()).execute().use { require(it.isSuccessful){"TV connection rejected. Pair again."}; JSONObject(it.body!!.string()) }
  fun probe(){require(post("health",JSONObject()).getBoolean("ready"))}
- fun pair(){
-  AppLog.add("Phone: pairing request started")
-  try { auth=post("pair",JSONObject().put("code",link.code)).getString("auth"); AppLog.add("Phone: pairing accepted") }
+ fun pair(manualCode:String?=null){
+  AppLog.add(if(manualCode==null) "Phone: QR pairing request started" else "Phone: manual pairing request started")
+  try { auth=post(if(manualCode==null) "pair" else "manual-pair",JSONObject().put("code",manualCode ?: link.code)).getString("auth"); AppLog.add("Phone: pairing accepted") }
   catch(e:java.io.IOException){
    val detail=when(e){
     is javax.net.ssl.SSLException -> "Secure pairing failed. Update AlbumBeam on the TV, choose End / Pair again, and rescan."

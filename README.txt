@@ -120,3 +120,22 @@ runs its loopback self-test. The v0.1.2 phone app remains protocol-compatible.
 WirePairingTest runs actual loopback TLS/HTTP on the JVM, covering successful
 pairing and delivery, rejected pins, unauthorized transfers, replay protection,
 and identity rotation. Android instrumentation remains a separate device check.
+
+Pairing options in v0.1.5
+Update both apps for these options. On TV choose Full-screen QR to maximize the
+code with a white background; Back or Close QR returns to the normal screen.
+For manual pairing choose Show 6-character code. On phone choose Enter
+6-character TV code, select the nearby TV, compare all four verification groups
+with the TV display, then enter the code and Connect. The verification comparison
+authenticates the discovery-provided certificate; never confirm a mismatch.
+The random code expires in five minutes, permits five guesses, and is single-use
+across both pairing paths. End / Pair again generates a new code. Discovery uses
+local DNS-SD/mDNS with no server; guest networks or multicast filtering may block
+it, in which case use QR pairing. Codes and pairing secrets are never logged.
+
+On phone Scan TV QR (auto zoom) enables Google's automatic zoom. Scan with zoom
+controls opens a local CameraX scanner with 1x/2x/4x presets and a zoom slider
+within device limits (up to 10x). It requests camera permission on the phone only.
+If denied, use the Google scanner or manual code. Camera images are decoded
+locally and never saved or uploaded. Camera behavior and remote full-screen
+focus still need physical-device validation. Google Cloud settings are unchanged.

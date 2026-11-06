@@ -11,6 +11,11 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.IntentSenderRequest
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
@@ -36,6 +41,8 @@ import coil.request.CachePolicy
 import com.google.android.gms.auth.api.identity.*
 import com.google.android.gms.common.api.Scope
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.MultiFormatWriter
 import kotlinx.coroutines.*
@@ -51,10 +58,17 @@ class MainActivity:ComponentActivity() {
  var items by mutableStateOf<List<JSONObject>>(emptyList())
  var epoch by mutableIntStateOf(0)
  var token by mutableStateOf("")
+ private val nearby by lazy{NearbyPairing(this)}
+ private var manualDisplay by mutableStateOf("")
+ private var verificationDisplay by mutableStateOf("")
  var session=""; var expires=Instant.MAX; var server:PairServer?=null; var connection:Connection?=null
  var job:Job?=null; var renew=false
  private var networkWatch:Job?=null
  private fun localAddress()=NetworkInterface.getNetworkInterfaces().toList().flatMap{it.inetAddresses.toList()}.firstOrNull{it is java.net.Inet4Address && it.isSiteLocalAddress}?.hostAddress
+ private val zoomResult=registerForActivityResult(ActivityResultContracts.StartActivityForResult()){result->
+  if(result.resultCode==RESULT_OK)result.data?.getStringExtra("qr")?.let{pairQr(it)}
+ }
+ private fun pairQr(raw:String){task{val c=Connection(Link.parse(raw));withContext(Dispatchers.IO){c.pair()};connection=c;AppLog.add("Phone: QR pairing accepted");status="Paired. Select photos to begin."}}
  private val authResult=registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
   try { authorized(Identity.getAuthorizationClient(this).getAuthorizationResultFromIntent(result.data)) } catch(e:Exception){status="Authorization cancelled or denied. Try again."; AppLog.add("Phone: authorization cancelled or denied (${e.javaClass.simpleName})")}
  }
@@ -68,8 +82,10 @@ class MainActivity:ComponentActivity() {
  }
  fun task(block:suspend ()->Unit) { lifecycleScope.launch { try{block()}catch(e:CancellationException){throw e}catch(e:Exception){status=e.message ?: "Connection failed. Retry when online."; AppLog.add("Operation failed (${e.javaClass.simpleName}); see screen for details")} } }
  fun pairing() {
-  server?.stop(); server=PairServer(diagnostic={message -> runOnUiThread{status=message.take(450)}}) { j -> runOnUiThread { AppLog.add("TV: received selection authorization from companion"); val next=j.getString("session"); if(session.isNotBlank() && next!=session) end(false); token=j.getString("token"); session=next; qr=null; load() } }
+  nearby.stopAdvertising();server?.stop(); server=PairServer(diagnostic={message -> runOnUiThread{status=message.take(450)}}) { j -> runOnUiThread { AppLog.add("TV: received selection authorization from companion"); val next=j.getString("session"); if(session.isNotBlank() && next!=session) end(false); token=j.getString("token"); session=next; qr=null; load() } }
   try { server!!.start(); AppLog.add("TV: secure pairing server started; QR valid for five minutes"); val host=localAddress() ?: error("Connect the TV to your home network, then retry.")
+   manualDisplay=server!!.manualCode;verificationDisplay=verification(server!!.pin)
+   runCatching{nearby.advertise(server!!.listeningPort,server!!.pin)}.onFailure{AppLog.add("TV: discovery unavailable; QR still works")}
    val matrix=MultiFormatWriter().encode(server!!.link(host).json(),BarcodeFormat.QR_CODE,600,600)
    qr=Bitmap.createBitmap(600,600,Bitmap.Config.ARGB_8888).apply { for(x in 0..599) for(y in 0..599) setPixel(x,y,if(matrix[x,y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE) }
    status="Scan using the AlbumBeam Companion. QR expires in five minutes."
@@ -90,7 +106,7 @@ class MainActivity:ComponentActivity() {
   }catch(e:Exception){status=e.message ?: "Pairing unavailable"}
  }
  fun authorize(refresh:Boolean=false) {
-  if(connection==null){status="Scan the TV QR first.";return}
+  if(connection==null){status="Pair with your TV first.";return}
   if(refresh && session.isBlank()){status="Select photos first.";return}
   AppLog.add(if(refresh) "Phone: requesting renewed Google authorization" else "Phone: requesting Google Photos permission")
   renew=refresh
@@ -157,11 +173,49 @@ class MainActivity:ComponentActivity() {
   Text("AlbumBeam Companion v${BuildConfig.VERSION_NAME}",style=MaterialTheme.typography.headlineMedium); Text("Connect both devices to your home network. Search by album title in Google Photos, then select photos and videos.")
   Text(status)
   ActivityLog()
-  Action("Scan TV QR") { GmsBarcodeScanning.getClient(this@MainActivity).startScan().addOnSuccessListener { result -> task { val c=Connection(Link.parse(result.rawValue ?: "")); withContext(Dispatchers.IO){c.pair()}; connection=c; AppLog.add("Phone: QR decoded and TV paired"); status="Paired. Select photos to begin." } }.addOnFailureListener{status="Scan cancelled or unavailable. Install/update Google Play services."} }
+  Action("Scan TV QR (auto zoom)") {
+   val options=GmsBarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).enableAutoZoom().build()
+   GmsBarcodeScanning.getClient(this@MainActivity,options).startScan().addOnSuccessListener{it.rawValue?.let{value->pairQr(value)}}.addOnFailureListener{status="Scan cancelled or unavailable. Try the zoom camera or manual code."}
+  }
+  Action("Scan with zoom controls"){zoomResult.launch(Intent().setClassName(this@MainActivity,"dev.personal.photostv.ZoomScannerActivity"))}
+  var manual by remember{mutableStateOf(false)}
+  Action("Enter 6-character TV code"){manual=true}
+  if(manual)ManualPairing{manual=false}
   Action("Select photos / replace selection") {authorize()}
   Action("Reconnect authorization") {authorize(true)}
  } }
+ @Composable fun ManualPairing(close:()->Unit){
+  val peers=remember{mutableStateListOf<NearbyTV>()}
+  var chosen by remember{mutableStateOf<NearbyTV?>(null)}
+  var code by remember{mutableStateOf("")}
+  var checked by remember{mutableStateOf(false)}
+  var busy by remember{mutableStateOf(false)}
+  var error by remember{mutableStateOf("")}
+  DisposableEffect(Unit){runCatching{nearby.discover{peer->if(peers.none{it.link.host==peer.link.host && it.link.port==peer.link.port})peers.add(peer)}}.onFailure{error="Nearby TV discovery unavailable. Use QR pairing."};onDispose{nearby.stopDiscovery()}}
+  Dialog(onDismissRequest={if(!busy)close()}){Surface(shape=MaterialTheme.shapes.large){Column(Modifier.padding(20.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
+   Text("Pair using TV code",style=MaterialTheme.typography.headlineSmall)
+   Text("On your TV choose Show 6-character code. Both devices must share a home network.")
+   if(peers.isEmpty())Text("Searching for TVs… If none appear, use QR pairing; the network may block device discovery.")
+   peers.forEach{peer->Button(enabled=!busy,onClick={chosen=peer;checked=false;code="";error=""}){Text(peer.name)}}
+   chosen?.let{peer->
+    Text("Compare this verification value with the one on the TV:")
+    Text(verification(peer.link.pin),style=MaterialTheme.typography.titleMedium)
+    Row(verticalAlignment=Alignment.CenterVertically){Checkbox(checked=checked,onCheckedChange={checked=it},enabled=!busy);Text("All four groups match the TV")}
+    OutlinedTextField(value=code,onValueChange={code=it.uppercase(java.util.Locale.ROOT).filter{c->c in "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"}.take(6)},label={Text("6-character TV code")},singleLine=true,enabled=!busy)
+    Text("Codes expire after five minutes. Five failed attempts lock manual pairing until the TV generates a new code.")
+    Button(enabled=checked && code.length==6 && !busy,onClick={busy=true;error="";task{
+     try{val c=Connection(peer.link);withContext(Dispatchers.IO){c.pair(code)};connection=c;status="Paired using TV code. Select photos to begin.";AppLog.add("Phone: verified manual pairing accepted");close()}
+     catch(e:Exception){if(e is CancellationException)throw e;error="Pairing failed. Verify the TV code, or generate a new one. "+(if(e is java.io.IOException)tlsDetails(e) else "")}
+     finally{busy=false}
+    }}){Text(if(busy) "Connecting…" else "Connect")}
+   }
+   if(error.isNotBlank())Text(error)
+   Button(enabled=!busy,onClick=close){Text("Cancel")}
+  }}}
+ }
  @Composable fun TV() {
+  var fullQr by remember{mutableStateOf(false)}
+  var showCode by remember{mutableStateOf(false)}
   var selected by remember { mutableIntStateOf(-1) }; var slideshow by remember { mutableStateOf(false) }; var loaded by remember(selected) { mutableStateOf(false) }; var retryCount by remember { mutableIntStateOf(0) }
   val context=LocalContext.current
   val loader=remember(epoch) { ImageLoader.Builder(context).memoryCache { coil.memory.MemoryCache.Builder(context).maxSizePercent(0.18).build() }.diskCachePolicy(CachePolicy.DISABLED).build() }
@@ -169,15 +223,34 @@ class MainActivity:ComponentActivity() {
   LaunchedEffect(items.isEmpty()){if(items.isEmpty()){selected=-1;slideshow=false}}
   fun advance(){ if(items.isNotEmpty()) selected=(selected+1)%items.size }
   LaunchedEffect(selected,slideshow,loaded){if(slideshow && loaded && selected>=0 && items.getOrNull(selected)?.getString("type")!="VIDEO"){delay(10_000);advance()}}
+  if(fullQr && qr!=null)Dialog(onDismissRequest={fullQr=false},properties=DialogProperties(usePlatformDefaultWidth=false,decorFitsSystemWindows=false)){
+   Box(Modifier.fillMaxSize().background(Color.White)){
+    Image(qr!!.asImageBitmap(),"Full-screen pairing QR",Modifier.fillMaxSize().padding(24.dp),contentScale=ContentScale.Fit)
+    Box(Modifier.align(Alignment.TopEnd).padding(16.dp)){Action("Close QR"){fullQr=false}}
+   }
+  }
+  if(showCode && qr!=null)Dialog(onDismissRequest={showCode=false},properties=DialogProperties(usePlatformDefaultWidth=false)){
+   Surface{Column(Modifier.padding(32.dp),verticalArrangement=Arrangement.spacedBy(16.dp)){
+    Text("Enter this code on your phone",style=MaterialTheme.typography.headlineMedium)
+    Text(manualDisplay,style=MaterialTheme.typography.displayLarge)
+    Text("Verification: $verificationDisplay",style=MaterialTheme.typography.headlineSmall)
+    Text("Compare all four verification groups on your phone before connecting. Code expires after five minutes.")
+    Action("Close"){showCode=false}
+   }}
+  }
   BackHandler(selected>=0){selected=-1;slideshow=false}
   Column(Modifier.padding(24.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
-   Text("AlbumBeam v${BuildConfig.VERSION_NAME}",style=MaterialTheme.typography.headlineMedium); Text(status)
+   Text("AlbumBeam v${BuildConfig.VERSION_NAME}",style=MaterialTheme.typography.headlineMedium)
+   if(qr!=null)Row(horizontalArrangement=Arrangement.spacedBy(12.dp)){Action("Full-screen QR"){fullQr=true};Action("Show 6-character code"){showCode=true}}
+   Text(status)
    ActivityLog()
    Row(horizontalArrangement=Arrangement.spacedBy(12.dp)) {
     Action("End / Pair again"){end()}; Action("Retry"){retryCount++;if(session.isBlank()) pairing() else load()}
     if(items.isNotEmpty()) Action(if(slideshow) "Pause slideshow" else "Slideshow"){slideshow=!slideshow;if(selected<0)selected=0}
    }
-   qr?.let{Image(it.asImageBitmap(),"Pairing QR",Modifier.size(300.dp))}
+   qr?.let{bitmap->
+    Image(bitmap.asImageBitmap(),"Pairing QR",Modifier.size(300.dp))
+   }
    if(selected<0) LazyVerticalGrid(columns=GridCells.Adaptive(180.dp),verticalArrangement=Arrangement.spacedBy(12.dp),horizontalArrangement=Arrangement.spacedBy(12.dp)) {
     itemsIndexed(items){i,item->Column { Action("${if(item.getString("type")=="VIDEO") "▶ " else ""}${i+1}") {selected=i}; AsyncImage(ImageRequest.Builder(context).data(item.getJSONObject("mediaFile").getString("baseUrl")+"=w320-h180").addHeader("Authorization","Bearer $token").build(),"Thumbnail",imageLoader=loader,modifier=Modifier.height(110.dp)) } }
    } else items.getOrNull(selected)?.let { item ->
@@ -195,5 +268,5 @@ class MainActivity:ComponentActivity() {
    }
   }
  }
- override fun onDestroy(){networkWatch?.cancel();if(BuildConfig.FLAVOR=="tv")end(false);token="";server?.stop();connection=null;super.onDestroy()}
+ override fun onDestroy(){nearby.close();networkWatch?.cancel();if(BuildConfig.FLAVOR=="tv")end(false);token="";server?.stop();connection=null;super.onDestroy()}
 }

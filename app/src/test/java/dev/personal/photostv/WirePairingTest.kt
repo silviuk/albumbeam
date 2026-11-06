@@ -44,6 +44,31 @@ class WirePairingTest {
    assertThrows(IllegalArgumentException::class.java){client.post("session",JSONObject().put("requestId","unauthorized"))}
   }finally{server.stop()}
  }
+ @Test fun manualPairingUsesTlsAndConsumesQrToo(){
+  var received=false
+  val server=PairServer{received=true}
+  try{
+   server.start();val link=server.link("127.0.0.1");val phone=Connection(link)
+   phone.pair(server.manualCode)
+   assertTrue(phone.auth.isNotBlank())
+   assertThrows(IllegalArgumentException::class.java){Connection(link).pair()}
+   phone.post("session",JSONObject().put("requestId","manual").put("session","test").put("token","test"))
+   assertTrue(received)
+  }finally{server.stop()}
+ }
+ @Test fun manualCodeLocksAfterFiveFailuresOverTls(){
+  val server=PairServer{}
+  try{
+   server.start();val link=server.link("127.0.0.1")
+   repeat(5){assertThrows(IllegalArgumentException::class.java){Connection(link).pair("!!!!!!")}}
+   assertThrows(IllegalArgumentException::class.java){Connection(link).pair(server.manualCode)}
+   Connection(link).pair() // QR remains a recovery path.
+  }finally{server.stop()}
+ }
+ @Test fun qrPairingConsumesManualCodeToo(){
+  val server=PairServer{}
+  try{server.start();val link=server.link("127.0.0.1");Connection(link).pair();assertThrows(IllegalArgumentException::class.java){Connection(link).pair(server.manualCode)}}finally{server.stop()}
+ }
  @Test fun eachServerGetsANewPinnedIdentity(){
   val first=PairServer{};val second=PairServer{}
   try{assertNotEquals(first.pin,second.pin)}finally{first.stop();second.stop()}
