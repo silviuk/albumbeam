@@ -10,4 +10,10 @@ class PairGateTest {
   threads.forEach{it.start()}; threads.forEach{it.join()}; assertEquals(1,wins.get())
  }
  @Test fun fingerprintsAreDeterministicAndSensitive(){assertEquals(fingerprint(byteArrayOf(1)),fingerprint(byteArrayOf(1)));assertNotEquals(fingerprint(byteArrayOf(1)),fingerprint(byteArrayOf(2)))}
+ @Test fun tlsDiagnosticsIncludeNestedCause(){
+  val e=javax.net.ssl.SSLHandshakeException("Connection closed").apply{initCause(java.security.InvalidKeyException("Incompatible digest"))}
+  val details=tlsDetails(e)
+  assertTrue(details.contains("SSLHandshakeException"));assertTrue(details.contains("InvalidKeyException"));assertTrue(details.contains("Incompatible digest"))
+ }
+ @Test fun tlsDiagnosticsBoundLongMessages(){assertTrue(tlsDetails(java.io.IOException("x".repeat(10000))).length<=1400)}
 }

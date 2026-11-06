@@ -90,3 +90,13 @@ The Android instrumentation test PairingTlsTest exercises legacy key migration,
 real pinned TLS pairing, certificate mismatch rejection, session transfer and
 replay rejection. Run connectedPhoneDebugAndroidTest on a connected Android
 device; it cannot be run without a device/emulator.
+
+Diagnostics in v0.1.2
+Both apps show their installed version and use a TV/photo/beam launcher icon.
+Choose Show activity log to inspect timestamped pairing, TLS, Google API status,
+selection loading and video events. Copy log copies the bounded 120-event buffer
+to the device clipboard. Logs are memory-only; operational events also appear in
+Android logcat under AlbumBeam. They exclude Google tokens, QR secrets, media
+URLs, selected filenames and session IDs. TLS exceptions include their nested
+causes to help diagnose the S24 Ultra / Philips TV handshake failure, which is
+not yet confirmed fixed. Send the phone and TV logs after reproducing the issue.
