@@ -110,3 +110,13 @@ consume the QR secret and exposes no photos or credentials. The activity log
 records local TLS self-test PASSED or FAILED. Phone-to-TV connectivity still
 needs checking on hardware; a passing loopback test checks only the local stack.
 Server socket failures are also logged even when they are not SSLException.
+
+Memory-only identity in v0.1.4
+Pairing no longer uses Android Keystore. Each pairing server creates a fresh
+software EC identity in memory using OkHttp HeldCertificate. Its fingerprint
+is authenticated through the QR; pin checks and single-use secrets remain
+mandatory. Private keys and certificates are not saved to storage. The TV still
+runs its loopback self-test. The v0.1.2 phone app remains protocol-compatible.
+WirePairingTest runs actual loopback TLS/HTTP on the JVM, covering successful
+pairing and delivery, rejected pins, unauthorized transfers, replay protection,
+and identity rotation. Android instrumentation remains a separate device check.

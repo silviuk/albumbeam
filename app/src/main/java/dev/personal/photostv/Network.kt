@@ -1,9 +1,8 @@
 package dev.personal.photostv
 
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
 import fi.iki.elonen.NanoHTTPD
 import okhttp3.*
+import okhttp3.tls.HeldCertificate
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
@@ -30,7 +29,7 @@ class PairServer(private val diagnostic:(String)->Unit = {}, val receive:(JSONOb
    val failure=record.thrown ?: return
    // TLS details contain no HTTP payload, pairing secret or Google bearer token.
    val isTls=generateSequence(failure){it.cause}.take(8).any{it is javax.net.ssl.SSLException || it is java.security.GeneralSecurityException}
-   val details=if(isTls) tlsDetails(failure) else failure.javaClass.simpleName
+   val details=if(isTls || failure is java.net.SocketException || failure is java.net.SocketTimeoutException) tlsDetails(failure) else failure.javaClass.simpleName
    AppLog.add("TV socket error: "+details)
    diagnostic("TV socket error: "+details)
   }
@@ -39,22 +38,17 @@ class PairServer(private val diagnostic:(String)->Unit = {}, val receive:(JSONOb
  }
  override fun stop(){stopping=true;super.stop();logger.removeHandler(diagnostics);logger.level=previousLevel}
  init {
-  val ks=KeyStore.getInstance("AndroidKeyStore").apply{load(null)}
-  // v0.1's key authorized only SHA-256, but Android TLS signs prehashed data.
-  // Key authorizations cannot be edited, so migrate to a fresh local TLS key.
-  val alias="photos-tv-pair-v2"
-  if(!ks.containsAlias(alias)) KeyPairGenerator.getInstance("RSA","AndroidKeyStore").apply { initialize(KeyGenParameterSpec.Builder(alias,KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY).setDigests(KeyProperties.DIGEST_NONE,KeyProperties.DIGEST_SHA256,KeyProperties.DIGEST_SHA384,KeyProperties.DIGEST_SHA512).setSignaturePaddings(KeyProperties.SIGNATURE_PADDING_RSA_PKCS1,KeyProperties.SIGNATURE_PADDING_RSA_PSS).build()) }.generateKeyPair()
-  // Avoid the key manager selecting the legacy, incompatible RSA key.
-  if(ks.containsAlias("photos-tv-pair")) ks.deleteEntry("photos-tv-pair")
-  AppLog.add("TV pairing certificate ready (v2 key)")
-  pin=fingerprint(ks.getCertificate(alias).encoded)
-  val key=ks.getKey(alias,null) as? PrivateKey ?: error("TV TLS private key unavailable")
-  val chain=ks.getCertificateChain(alias).map{it as X509Certificate}.toTypedArray()
-  val identity=PairingKeyManager(alias,key,chain){chosen ->
-   AppLog.add(if(chosen) "TV: pairing signing identity selected" else "TV: requested key type does not match pairing identity")
+  // A fresh, memory-only EC identity avoids vendor Keystore TLS signing paths.
+  // The QR authenticates its exact certificate; the private key is never saved.
+  val held=HeldCertificate.Builder().commonName("AlbumBeam pairing")
+   .addSubjectAlternativeName("127.0.0.1").ecdsa256().build()
+  pin=fingerprint(held.certificate.encoded)
+  AppLog.add("TV: temporary EC pairing identity generated in memory")
+  val identity=PairingKeyManager("albumbeam-session",held.keyPair.private,arrayOf(held.certificate)){chosen ->
+   AppLog.add(if(chosen) "TV: pairing signing identity selected" else "TV: trying another TLS key type")
   }
   val ssl=SSLContext.getInstance("TLS").apply{init(arrayOf(identity),null,SecureRandom())}
-  // Explicitly enable TLS 1.2 for compatibility with older TV keystores.
+  // Keep the supported pairing protocol explicit; do not enable obsolete TLS.
   // This affects only LAN pairing; Google requests retain normal TLS negotiation.
   makeSecure(ssl.serverSocketFactory,arrayOf("TLSv1.2"))
   previousLevel=logger.level

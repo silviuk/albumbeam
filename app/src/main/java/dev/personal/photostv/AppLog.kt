@@ -10,10 +10,11 @@ import java.time.format.DateTimeFormatter
 object AppLog {
  private val buffer=MutableStateFlow<List<String>>(emptyList())
  val entries=buffer.asStateFlow()
+ internal var output:(String)->Unit={Log.i("AlbumBeam",it);Unit}
  @Synchronized fun add(event:String){
   val line=LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"))+"  "+event
   buffer.value=(buffer.value+line).takeLast(120)
-  Log.i("AlbumBeam",line)
+  output(line)
  }
  @Synchronized fun clear(){buffer.value=emptyList()}
 }
