@@ -209,3 +209,21 @@ Quality & info also offers Restart with seek index / Restart with fast startup.
 Fast startup skips optional fragmented-MP4 seek indexing, which can limit seeking
 on such files. Use seek-index mode to restore the original indexing behavior.
 This restarts the current video; neither mode transcodes or reduces quality.
+
+Desktop link feedback and video network diagnostics in v0.1.9
+Choose many on computer opens a modal immediately, with authorization/session/TV
+connection progress and clear failure states. When ready, Copy link or Share link
+to computer, then open it in a browser signed into the same Google account. The
+app cannot launch a remote computer browser automatically. The dialog also offers
+Open on this phone instead. Repeated preparation clicks are blocked while busy,
+and missing access tokens or cancelled authorization no longer fail silently.
+
+The provided v0.1.8 log stalled after Google's redirect before video response
+headers, rather than waiting for decoded playback buffering. Video connections
+now prefer IPv4 while keeping IPv6 fallback, use a six-second connect timeout and
+20-second read-inactivity timeout, and permit one automatic loader retry. There
+is no whole-video call time limit: ongoing long streams can continue normally.
+DNS family counts, connection/TLS phases and destination hostnames are logged
+without signed URL paths/queries or bearer headers. Byte encoding is identity
+to keep range offsets unambiguous. These changes are not proof of a fix for a
+Google/CDN outage or network block; share the new log if it still stalls.

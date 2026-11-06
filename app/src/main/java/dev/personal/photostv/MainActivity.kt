@@ -80,6 +80,14 @@ class MainActivity:ComponentActivity() {
  }}
  private var pickerLink by mutableStateOf("")
  private var pickerOnComputer=false
+ private var desktopDialog by mutableStateOf(false)
+ private var authorizationBusy by mutableStateOf(false)
+ private var selectionStep by mutableStateOf("")
+ private var selectionError by mutableStateOf("")
+ private fun selectionFailure(message:String,kind:String="unknown"){
+  authorizationBusy=false;token="";status=message;selectionError=message
+  AppLog.add("Phone: selection preparation failed ($kind)")
+ }
  private var tvReport by mutableStateOf("")
  private var logReceiver:Job?=null
  var session=""; var expires=Instant.MAX; var server:PairServer?=null; var connection:Connection?=null
@@ -107,7 +115,7 @@ class MainActivity:ComponentActivity() {
  }
  private fun pairQr(raw:String){task{val c=Connection(Link.parse(raw));withContext(Dispatchers.IO){c.pair()};connected(c);AppLog.add("Phone: QR pairing accepted");status="Paired. Select photos to begin."}}
  private val authResult=registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
-  try { authorized(Identity.getAuthorizationClient(this).getAuthorizationResultFromIntent(result.data)) } catch(e:Exception){status="Authorization cancelled or denied. Try again."; AppLog.add("Phone: authorization cancelled or denied (${e.javaClass.simpleName})")}
+  try { authorized(Identity.getAuthorizationClient(this).getAuthorizationResultFromIntent(result.data)) } catch(e:Exception){selectionFailure("Authorization cancelled or denied. Try again.",e.javaClass.simpleName)}
  }
  override fun onCreate(b:Bundle?) {
   super.onCreate(b); AppLog.add("Started ${BuildConfig.FLAVOR} app v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}), Android ${android.os.Build.VERSION.RELEASE}, ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"); window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -143,22 +151,71 @@ class MainActivity:ComponentActivity() {
   }catch(e:Exception){status=e.message ?: "Pairing unavailable"}
  }
  fun authorize(refresh:Boolean=false,computer:Boolean=false) {
+  if(authorizationBusy)return
   pickerOnComputer=computer
-  if(connection==null){status="Pair with your TV first.";return}
-  if(refresh && session.isBlank()){status="Select photos first.";return}
+  if(computer){desktopDialog=true;pickerLink=""}
+  selectionError="";selectionStep="Requesting Google Photos permission…"
+  if(connection==null){selectionFailure("Pair AlbumBeam with your TV before creating a selection link.");return}
+  if(refresh && session.isBlank()){selectionFailure("Select photos first.");return}
+  authorizationBusy=true
   AppLog.add(if(refresh) "Phone: requesting renewed Google authorization" else "Phone: requesting Google Photos permission")
   renew=refresh
   Identity.getAuthorizationClient(this).authorize(AuthorizationRequest.builder().setRequestedScopes(listOf(Scope("https://www.googleapis.com/auth/photospicker.mediaitems.readonly"))).build())
    .addOnSuccessListener { r -> if(r.hasResolution()) authResult.launch(IntentSenderRequest.Builder(r.pendingIntent!!.intentSender).build()) else authorized(r) }
-   .addOnFailureListener {status="Google authorization failed. Check Cloud configuration and retry."; AppLog.add("Phone: Google authorization failed (${it.javaClass.simpleName})")}
+   .addOnFailureListener {selectionFailure("Google authorization failed. Check Cloud configuration and retry.",it.javaClass.simpleName)}
  }
- fun authorized(r:AuthorizationResult) { AppLog.add("Phone: Google authorization granted"); token=r.accessToken ?: return; task {
-  val c=connection ?: error("Pair with your TV first")
-  if(!renew) { val s=withContext(Dispatchers.IO){api(token,"sessions","POST",JSONObject().put("pickingConfig",JSONObject().put("maxItemCount","2000")))}; session=s.getString("id"); pickerLink=s.getString("pickerUri");AppLog.add("Phone: created multi-select Google Photos session (up to 2000 items)");if(!pickerOnComputer)startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(pickerLink))) }
-  val payload=JSONObject().put("requestId",UUID.randomUUID().toString()).put("session",session).put("token",token)
-  withContext(Dispatchers.IO){c.post("session",payload)}
-  token=""; status=if(pickerOnComputer) "Selection link ready. Open it on your computer with the same Google account, select items and finish." else "Connected. Finish selecting in Google Photos, then use your TV remote."
- } }
+ fun authorized(r:AuthorizationResult) {
+  val access=r.accessToken
+  if(access.isNullOrBlank()){selectionFailure("Google returned no access token. Retry authorization.");return}
+  AppLog.add("Phone: Google authorization granted");token=access
+  lifecycleScope.launch {
+   try{
+    val c=connection ?: error("Pair with your TV first")
+    if(!renew){
+     selectionStep="Creating your Google Photos selection link…"
+     val s=withContext(Dispatchers.IO){api(access,"sessions","POST",JSONObject().put("pickingConfig",JSONObject().put("maxItemCount","2000")))}
+     session=s.getString("id");pickerLink=s.getString("pickerUri")
+     AppLog.add("Phone: created multi-select Google Photos session (up to 2000 items)")
+    }
+    selectionStep="Connecting this selection to the TV…"
+    val payload=JSONObject().put("requestId",UUID.randomUUID().toString()).put("session",session).put("token",access)
+    withContext(Dispatchers.IO){c.post("session",payload)}
+    status=if(pickerOnComputer) "Selection link ready. Open it on your computer using the same Google account." else "Connected. Select your photos and videos in Google Photos, then finish."
+    selectionStep="Ready — copy or share the link below"
+    if(!renew && !pickerOnComputer)startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(pickerLink)))
+   }catch(e:CancellationException){throw e}
+   catch(e:Exception){selectionFailure("Could not prepare selection: "+(e.message ?: e.javaClass.simpleName),e.javaClass.simpleName)}
+   finally{token="";authorizationBusy=false}
+  }
+ }
+ @Composable fun DesktopSelectionDialog(){
+  if(!desktopDialog)return
+  Dialog(onDismissRequest={if(!authorizationBusy)desktopDialog=false}){
+   Surface(shape=MaterialTheme.shapes.large){Column(Modifier.padding(24.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(14.dp)){
+    Text("Choose photos on your computer",style=MaterialTheme.typography.headlineSmall)
+    if(authorizationBusy){CircularProgressIndicator();Text(selectionStep)}
+    else if(selectionError.isNotBlank()){
+     Text(selectionError)
+     Action("Try again"){authorize(computer=true)}
+    }else if(pickerLink.isNotBlank()){
+     Text("1. Copy or share this link to your computer.")
+     OutlinedTextField(value=pickerLink,onValueChange={},readOnly=true,label={Text("Google Photos selection link")})
+     Action("Copy link"){
+      (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("Google Photos selection link",pickerLink))
+      selectionStep="Link copied. Paste it into your computer browser."
+     }
+     Action("Share link to computer"){startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT,pickerLink),"Send selection link to your computer"))}
+     Text("2. Open it in a computer browser signed in to the same Google account.")
+     Text("3. Search your album name, choose items using Google's picker, and finish. The TV will load them.")
+     Text("AlbumBeam cannot open a browser on your computer automatically. This link expires when you finish or the session expires.")
+     Text(selectionStep)
+     Action("Open on this phone instead"){desktopDialog=false;startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(pickerLink)))}
+    }
+    if(!authorizationBusy)Action("Close"){desktopDialog=false}
+   }}
+  }
+ }
+
  fun load() {
   job?.cancel(); job=lifecycleScope.launch { try {
    status="Waiting for selection…"; AppLog.add("TV: waiting for Google Photos selection")
@@ -207,7 +264,7 @@ class MainActivity:ComponentActivity() {
    if(expanded) Text(entries.takeLast(24).asReversed().joinToString("\n").ifBlank{"No events yet"},modifier=Modifier.heightIn(max=200.dp).verticalScroll(rememberScrollState()),style=MaterialTheme.typography.bodySmall)
   }
  }
- @Composable fun Phone() { Column(Modifier.padding(24.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(16.dp)) {
+ @Composable fun Phone() { DesktopSelectionDialog(); Column(Modifier.padding(24.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(16.dp)) {
   Text("AlbumBeam Companion v${BuildConfig.VERSION_NAME}",style=MaterialTheme.typography.headlineMedium); Text("Connect both devices to your home network. Search by album title in Google Photos, then select photos and videos.")
   Text(status)
   ActivityLog()
@@ -239,6 +296,7 @@ class MainActivity:ComponentActivity() {
   if(manual)ManualPairing{manual=false}
   Action("Select photos / replace selection") {authorize()}
   Action("Choose many on computer") {authorize(computer=true)}
+  if(authorizationBusy)Text(selectionStep)
   Text("Google's picker supports multiple photos/videos, up to 2,000 per session. Search an album title to find its items. AlbumBeam cannot add a Select all or whole-album button inside Google's picker.")
   if(pickerLink.isNotBlank()){
    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){

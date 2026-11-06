@@ -146,13 +146,11 @@ private class PhotoSurface(context:Context,private val pixels:PhotoPixels):Surfa
  }
  val player=remember{
   AppLog.add("Video: preparing progressive playback; processing=${processing.ifBlank{"unspecified"}}; MIME=${file.optString("mimeType")}")
-  val http=OkHttpClient.Builder().followRedirects(true).followSslRedirects(false)
-   .connectTimeout(20,TimeUnit.SECONDS).readTimeout(60,TimeUnit.SECONDS)
-   .addNetworkInterceptor{chain->val response=chain.proceed(chain.request());AppLog.add("Video HTTP ${response.code}; content-type=${response.header("Content-Type")}; length=${response.header("Content-Length")}; requested-range=${chain.request().header("Range") ?: "none"}; content-range=${response.header("Content-Range") ?: "none"}; accept-ranges=${response.header("Accept-Ranges") ?: "unspecified"}; TTFB=${response.receivedResponseAtMillis-response.sentRequestAtMillis}ms");response}.build()
+  val http=videoHttpClient()
   val source=OkHttpDataSource.Factory(http).setDefaultRequestProperties(mapOf("Authorization" to "Bearer $token")).setUserAgent("AlbumBeam/${BuildConfig.VERSION_NAME}")
   ExoPlayer.Builder(context,DefaultRenderersFactory(context).setEnableDecoderFallback(true))
    .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(5000,20000,750,1500).setPrioritizeTimeOverSizeThresholds(true).build())
-   .setMediaSourceFactory(DefaultMediaSourceFactory(source,streamingExtractors(fastStartup))).build()
+   .setMediaSourceFactory(DefaultMediaSourceFactory(source,streamingExtractors(fastStartup)).setLoadErrorHandlingPolicy(androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy(1))).build()
  }
  DisposableEffect(player){
   val startTime=android.os.SystemClock.elapsedRealtime()
@@ -188,7 +186,7 @@ private class PhotoSurface(context:Context,private val pixels:PhotoPixels):Surfa
    }
    override fun onPlayWhenReadyChanged(ready:Boolean,reason:Int){stateCallback(if(!ready) "Paused" else if(player.playbackState==Player.STATE_READY) "Playing" else "Buffering");if(reason==Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)interacted()}
    override fun onPositionDiscontinuity(oldPosition:Player.PositionInfo,newPosition:Player.PositionInfo,reason:Int){if(reason==Player.DISCONTINUITY_REASON_SEEK)interacted()}
-   override fun onPlayerError(error:PlaybackException){message="Video failed: ${mediaError(error)}. Retry to refresh access, or send TV log to phone.";AppLog.add(message);failed(message)}
+   override fun onPlayerError(error:PlaybackException){message="Video failed: ${mediaError(error)}. "+(if(generateSequence<Throwable>(error){it.cause}.any{it is java.net.SocketTimeoutException}) "Google video delivery timed out before playback could proceed. Retry and share the TV log." else "Retry to refresh access, or send TV log to phone.");AppLog.add(message);failed(message)}
   }
   player.trackSelectionParameters=player.trackSelectionParameters.buildUpon().setForceHighestSupportedBitrate(true).build()
   player.addAnalyticsListener(object:androidx.media3.exoplayer.analytics.AnalyticsListener{
