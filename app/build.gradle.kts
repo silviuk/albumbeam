@@ -1,7 +1,7 @@
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android"); id("org.jetbrains.kotlin.plugin.compose") }
 android {
  namespace="dev.personal.photostv"; compileSdkVersion("android-37.0")
- defaultConfig { applicationId="dev.personal.photostv"; minSdk=26; targetSdk=36; versionCode=6; versionName="0.1.5"; testInstrumentationRunner="androidx.test.runner.AndroidJUnitRunner" }
+ defaultConfig { applicationId="dev.personal.photostv"; minSdk=26; targetSdk=36; versionCode=7; versionName="0.1.6"; testInstrumentationRunner="androidx.test.runner.AndroidJUnitRunner" }
  flavorDimensions += "device"
  productFlavors { create("phone") { dimension="device"; applicationIdSuffix=".phone" }; create("tv") { dimension="device"; applicationIdSuffix=".tv" } }
  buildFeatures { compose=true; buildConfig=true }
@@ -16,6 +16,7 @@ dependencies {
  implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.11.0")
  implementation("androidx.media3:media3-exoplayer:1.11.1")
  implementation("androidx.media3:media3-ui:1.11.1")
+ implementation("androidx.media3:media3-datasource-okhttp:1.11.1")
  implementation("com.google.android.gms:play-services-auth:22.0.0")
  implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
  "phoneImplementation"("androidx.camera:camera-camera2:1.6.2")

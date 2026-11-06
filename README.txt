@@ -139,3 +139,27 @@ within device limits (up to 10x). It requests camera permission on the phone onl
 If denied, use the Google scanner or manual code. Camera images are decoded
 locally and never saved or uploaded. Camera behavior and remote full-screen
 focus still need physical-device validation. Google Cloud settings are unchanged.
+
+Media viewer and log transfer in v0.1.6
+Photos and videos now occupy a dedicated full-screen viewer, with compact
+controls overlaid instead of sharing a column with logs. Full-size photos use
+explicit screen-sized decoding and a fixed-size SurfaceView buffer up to 4K,
+independent of thumbnail sampling. Logs record source/request/decoded/surface
+sizes so actual output can be checked on your hardware. Grid previews use 640px.
+Photos are fitted without cropping; memory decoding is bounded at 4K.
+
+Video now uses Media3's OkHttp data source with HTTPS redirects, longer timeouts,
+decoder fallback, processing-status checks and detailed HTTP/track/error codes.
+Google videos remain transcoded; unsupported device codecs cannot be guaranteed.
+Use Retry in the viewer to refresh the selection's URLs and restart playback.
+
+To send TV diagnostics: keep the paired phone companion open and press Send
+detailed log to phone on TV (or TV log -> phone inside the viewer). The phone
+receives the queued snapshot within approximately five seconds over authenticated,
+certificate-pinned TLS. Alternatively press Get detailed TV log on the phone.
+Copy TV log or Share TV log then lets you send it yourself. No external service
+receives logs automatically. Reports contain up to 500 memory-only events plus
+app version, device startup information and memory usage. Secrets, protected
+media URLs, session IDs and selected filenames are excluded. A new pairing
+connection replaces the old report channel. Update both apps for log transfer.
+Physical video decoding and native display output still require device testing.

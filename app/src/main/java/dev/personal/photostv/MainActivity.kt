@@ -61,6 +61,8 @@ class MainActivity:ComponentActivity() {
  private val nearby by lazy{NearbyPairing(this)}
  private var manualDisplay by mutableStateOf("")
  private var verificationDisplay by mutableStateOf("")
+ private var tvReport by mutableStateOf("")
+ private var logReceiver:Job?=null
  var session=""; var expires=Instant.MAX; var server:PairServer?=null; var connection:Connection?=null
  var job:Job?=null; var renew=false
  private var networkWatch:Job?=null
@@ -68,12 +70,27 @@ class MainActivity:ComponentActivity() {
  private val zoomResult=registerForActivityResult(ActivityResultContracts.StartActivityForResult()){result->
   if(result.resultCode==RESULT_OK)result.data?.getStringExtra("qr")?.let{pairQr(it)}
  }
- private fun pairQr(raw:String){task{val c=Connection(Link.parse(raw));withContext(Dispatchers.IO){c.pair()};connection=c;AppLog.add("Phone: QR pairing accepted");status="Paired. Select photos to begin."}}
+ private fun connected(c:Connection){
+  connection=c;tvReport="";logReceiver?.cancel()
+  logReceiver=lifecycleScope.launch{
+   var serial=0L
+   while(isActive){
+    delay(5000)
+    try{
+     val reply=withContext(Dispatchers.IO){c.post("log-inbox",JSONObject().put("after",serial))}
+     serial=reply.optLong("serial",serial)
+     val report=reply.optString("report")
+     if(report.isNotBlank()){tvReport=report;AppLog.add("Phone: TV diagnostic report received")}
+    }catch(e:Exception){if(e is CancellationException)throw e;delay(10000)}
+   }
+  }
+ }
+ private fun pairQr(raw:String){task{val c=Connection(Link.parse(raw));withContext(Dispatchers.IO){c.pair()};connected(c);AppLog.add("Phone: QR pairing accepted");status="Paired. Select photos to begin."}}
  private val authResult=registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
   try { authorized(Identity.getAuthorizationClient(this).getAuthorizationResultFromIntent(result.data)) } catch(e:Exception){status="Authorization cancelled or denied. Try again."; AppLog.add("Phone: authorization cancelled or denied (${e.javaClass.simpleName})")}
  }
  override fun onCreate(b:Bundle?) {
-  super.onCreate(b); AppLog.add("Started ${BuildConfig.FLAVOR} app v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}), Android ${android.os.Build.VERSION.RELEASE}"); window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+  super.onCreate(b); AppLog.add("Started ${BuildConfig.FLAVOR} app v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}), Android ${android.os.Build.VERSION.RELEASE}, ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"); window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
   setContent { MaterialTheme(colorScheme=darkColorScheme()) { Surface(Modifier.fillMaxSize()) { if(BuildConfig.FLAVOR=="tv") TV() else Phone() } } }
   if(BuildConfig.FLAVOR=="tv") {
    pairing()
@@ -173,6 +190,17 @@ class MainActivity:ComponentActivity() {
   Text("AlbumBeam Companion v${BuildConfig.VERSION_NAME}",style=MaterialTheme.typography.headlineMedium); Text("Connect both devices to your home network. Search by album title in Google Photos, then select photos and videos.")
   Text(status)
   ActivityLog()
+  if(connection!=null)Action("Get detailed TV log"){task{val reply=withContext(Dispatchers.IO){connection!!.post("logs",JSONObject())};tvReport=reply.getString("report");AppLog.add("Phone: TV diagnostic report fetched")}}
+  if(tvReport.isNotBlank()){
+   Text("TV diagnostic report received")
+   Text(tvReport.takeLast(10000),modifier=Modifier.heightIn(max=200.dp).verticalScroll(rememberScrollState()),style=MaterialTheme.typography.bodySmall)
+   Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
+    Action("Copy TV log"){
+     (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("AlbumBeam TV log",tvReport))
+    }
+    Action("Share TV log"){startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT,tvReport),"Share TV log"))}
+   }
+  }
   Action("Scan TV QR (auto zoom)") {
    val options=GmsBarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).enableAutoZoom().build()
    GmsBarcodeScanning.getClient(this@MainActivity,options).startScan().addOnSuccessListener{it.rawValue?.let{value->pairQr(value)}}.addOnFailureListener{status="Scan cancelled or unavailable. Try the zoom camera or manual code."}
@@ -204,7 +232,7 @@ class MainActivity:ComponentActivity() {
     OutlinedTextField(value=code,onValueChange={code=it.uppercase(java.util.Locale.ROOT).filter{c->c in "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"}.take(6)},label={Text("6-character TV code")},singleLine=true,enabled=!busy)
     Text("Codes expire after five minutes. Five failed attempts lock manual pairing until the TV generates a new code.")
     Button(enabled=checked && code.length==6 && !busy,onClick={busy=true;error="";task{
-     try{val c=Connection(peer.link);withContext(Dispatchers.IO){c.pair(code)};connection=c;status="Paired using TV code. Select photos to begin.";AppLog.add("Phone: verified manual pairing accepted");close()}
+     try{val c=Connection(peer.link);withContext(Dispatchers.IO){c.pair(code)};connected(c);status="Paired using TV code. Select photos to begin.";AppLog.add("Phone: verified manual pairing accepted");close()}
      catch(e:Exception){if(e is CancellationException)throw e;error="Pairing failed. Verify the TV code, or generate a new one. "+(if(e is java.io.IOException)tlsDetails(e) else "")}
      finally{busy=false}
     }}){Text(if(busy) "Connecting…" else "Connect")}
@@ -241,6 +269,7 @@ class MainActivity:ComponentActivity() {
   BackHandler(selected>=0){selected=-1;slideshow=false}
   Column(Modifier.padding(24.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
    Text("AlbumBeam v${BuildConfig.VERSION_NAME}",style=MaterialTheme.typography.headlineMedium)
+   Action("Send detailed log to phone"){server?.sendLogToPhone();status="TV log queued. Keep the paired phone companion open to receive it."}
    if(qr!=null)Row(horizontalArrangement=Arrangement.spacedBy(12.dp)){Action("Full-screen QR"){fullQr=true};Action("Show 6-character code"){showCode=true}}
    Text(status)
    ActivityLog()
@@ -252,21 +281,29 @@ class MainActivity:ComponentActivity() {
     Image(bitmap.asImageBitmap(),"Pairing QR",Modifier.size(300.dp))
    }
    if(selected<0) LazyVerticalGrid(columns=GridCells.Adaptive(180.dp),verticalArrangement=Arrangement.spacedBy(12.dp),horizontalArrangement=Arrangement.spacedBy(12.dp)) {
-    itemsIndexed(items){i,item->Column { Action("${if(item.getString("type")=="VIDEO") "▶ " else ""}${i+1}") {selected=i}; AsyncImage(ImageRequest.Builder(context).data(item.getJSONObject("mediaFile").getString("baseUrl")+"=w320-h180").addHeader("Authorization","Bearer $token").build(),"Thumbnail",imageLoader=loader,modifier=Modifier.height(110.dp)) } }
-   } else items.getOrNull(selected)?.let { item ->
-    Row(horizontalArrangement=Arrangement.spacedBy(12.dp)) {Action("Previous"){slideshow=false;selected=(selected-1+items.size)%items.size};Action("Next / Skip"){slideshow=false;advance()};Action("Grid"){selected=-1;slideshow=false}}
-    val file=item.getJSONObject("mediaFile"); val base=file.getString("baseUrl")
-    if(item.getString("type")=="VIDEO") key(base,token,retryCount) {
-     val slideNow by rememberUpdatedState(slideshow)
-     val player=remember { AppLog.add("TV: preparing video playback"); ExoPlayer.Builder(context).setMediaSourceFactory(DefaultMediaSourceFactory(DefaultHttpDataSource.Factory().setDefaultRequestProperties(mapOf("Authorization" to "Bearer $token")))).build().apply{setMediaItem(MediaItem.fromUri(base+"=dv"));prepare();playWhenReady=true} }
-     DisposableEffect(player){val listener=object:Player.Listener {override fun onPlayWhenReadyChanged(ready:Boolean,reason:Int){if(reason==Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)slideshow=false}; override fun onPositionDiscontinuity(oldPosition:Player.PositionInfo,newPosition:Player.PositionInfo,reason:Int){if(reason==Player.DISCONTINUITY_REASON_SEEK)slideshow=false}; override fun onPlaybackStateChanged(state:Int){if(state==Player.STATE_ENDED && slideNow)advance()};override fun onPlayerError(error:PlaybackException){status="Video unavailable or unsupported. Retry or skip."; AppLog.add("Video error: ${error.errorCodeName}")}};player.addListener(listener);onDispose{player.release()}}
-     AndroidView(factory={PlayerView(it).apply{this.player=player;useController=true;requestFocus()}},modifier=Modifier.fillMaxSize())
-    } else {
-     val d=windowManager.defaultDisplay.mode
-     key(base,retryCount) { AsyncImage(ImageRequest.Builder(context).data(base+"=w${d.physicalWidth}-h${d.physicalHeight}").addHeader("Authorization","Bearer $token").memoryCacheKey(base+token.hashCode()).build(),"Photo",imageLoader=loader,contentScale=ContentScale.Fit,modifier=Modifier.fillMaxSize(),onSuccess={loaded=true},onError={status="Photo failed to load. Retry or skip."; AppLog.add("Photo loading failed: ${it.result.throwable.javaClass.simpleName}")}) }
+    itemsIndexed(items){i,item->Column { Action("${if(item.getString("type")=="VIDEO") "▶ " else ""}${i+1}") {selected=i}; AsyncImage(ImageRequest.Builder(context).data(item.getJSONObject("mediaFile").getString("baseUrl")+"=w640-h360").addHeader("Authorization","Bearer $token").build(),"Thumbnail",imageLoader=loader,modifier=Modifier.height(110.dp)) } }
+   }
+  }
+  items.getOrNull(selected)?.let { item ->
+   Dialog(onDismissRequest={selected=-1;slideshow=false},properties=DialogProperties(usePlatformDefaultWidth=false,decorFitsSystemWindows=false)){
+    Box(Modifier.fillMaxSize().background(Color.Black)){
+     val file=item.getJSONObject("mediaFile")
+     if(item.getString("type")=="VIDEO")key(file.optString("baseUrl"),token,retryCount){
+      VideoViewer(file,token,Modifier.fillMaxSize(),onEnded={if(slideshow)advance()},onInteraction={slideshow=false},onFailure={message->status=message})
+     }else key(file.optString("baseUrl"),token,retryCount){
+      PhotoViewer(file,token,loader,Modifier.fillMaxSize(),onLoaded={loaded=true},onFailure={status=it})
+     }
+     Row(Modifier.align(Alignment.TopCenter).background(Color.Black.copy(alpha=0.75f)).padding(8.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)){
+      Action("Previous"){slideshow=false;selected=(selected-1+items.size)%items.size}
+      Action("Next"){slideshow=false;advance()}
+      Action(if(slideshow) "Pause slideshow" else "Slideshow"){slideshow=!slideshow}
+      Action("Retry"){retryCount++;loaded=false;load()}
+      Action("TV log → phone"){server?.sendLogToPhone()}
+      Action("Grid"){selected=-1;slideshow=false}
+     }
     }
    }
   }
  }
- override fun onDestroy(){nearby.close();networkWatch?.cancel();if(BuildConfig.FLAVOR=="tv")end(false);token="";server?.stop();connection=null;super.onDestroy()}
+ override fun onDestroy(){logReceiver?.cancel();nearby.close();networkWatch?.cancel();if(BuildConfig.FLAVOR=="tv")end(false);token="";server?.stop();connection=null;super.onDestroy()}
 }

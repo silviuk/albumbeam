@@ -21,6 +21,9 @@ class PairServer(private val diagnostic:(String)->Unit = {}, val receive:(JSONOb
  private val manualGate=ManualGate()
  val manualCode get()=manualGate.code
  private var paired=false
+ private var reportSerial=0L
+ private var pendingReport=""
+ @Synchronized fun sendLogToPhone(){pendingReport=AppLog.export();reportSerial++;AppLog.add("TV: diagnostic report queued for paired phone")}
  private val gate=PairGate(); private val auth=secret(); private val seen=mutableSetOf<String>()
  val pin:String
  private val logger=java.util.logging.Logger.getLogger(NanoHTTPD::class.java.name)
@@ -60,7 +63,7 @@ class PairServer(private val diagnostic:(String)->Unit = {}, val receive:(JSONOb
  }
  fun link(host:String)=Link(host,listeningPort,pin,gate.code)
  @Synchronized override fun serve(s:IHTTPSession):Response = try {
-  AppLog.add("TV request: "+when(s.uri){"/health"->"local TLS self-test";"/pair"->"pair";"/manual-pair"->"manual pair";"/session"->"session";else->"unknown route"})
+  if(s.uri!="/log-inbox")AppLog.add("TV request: "+when(s.uri){"/health"->"local TLS self-test";"/pair"->"pair";"/manual-pair"->"manual pair";"/logs"->"diagnostic report";"/session"->"session";else->"unknown route"})
   require(s.method==Method.POST)
   require((s.headers["content-length"]?.toLongOrNull() ?: 0) in 1..16384)
   val data=mutableMapOf<String,String>(); s.parseBody(data); val j=JSONObject(data["postData"] ?: "{}")
@@ -71,6 +74,8 @@ class PairServer(private val diagnostic:(String)->Unit = {}, val receive:(JSONOb
    else {paired=true;newFixedLengthResponse(JSONObject().put("auth",auth).toString())}
   }
   else if(s.headers["authorization"]!="Bearer $auth") newFixedLengthResponse(Response.Status.FORBIDDEN,"text/plain","Rejected")
+  else if(s.uri=="/logs")newFixedLengthResponse(JSONObject().put("report",AppLog.export()).toString())
+  else if(s.uri=="/log-inbox")newFixedLengthResponse(JSONObject().put("serial",reportSerial).put("report",if(j.optLong("after",0)<reportSerial)pendingReport else "").toString())
   else { require(s.uri=="/session"); val id=j.getString("requestId"); if(id !in seen) { receive(j); seen.add(id) }; newFixedLengthResponse("{}") }
  } catch(e:Exception) { newFixedLengthResponse(Response.Status.BAD_REQUEST,"text/plain","Invalid request") }
 }

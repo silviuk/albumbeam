@@ -69,6 +69,24 @@ class WirePairingTest {
   val server=PairServer{}
   try{server.start();val link=server.link("127.0.0.1");Connection(link).pair();assertThrows(IllegalArgumentException::class.java){Connection(link).pair(server.manualCode)}}finally{server.stop()}
  }
+ @Test fun diagnosticReportsRequirePairingAndDoNotExposeSecrets(){
+  val server=PairServer{}
+  try{
+   server.start();val link=server.link("127.0.0.1");val phone=Connection(link)
+   assertThrows(IllegalArgumentException::class.java){phone.post("logs",JSONObject())}
+   assertThrows(IllegalArgumentException::class.java){phone.post("log-inbox",JSONObject())}
+   phone.pair()
+   AppLog.add("test diagnostic marker")
+   val direct=phone.post("logs",JSONObject()).getString("report")
+   assertTrue(direct.contains("test diagnostic marker"))
+   assertFalse(direct.contains(phone.auth));assertFalse(direct.contains(link.code));assertFalse(direct.contains(server.manualCode))
+   server.sendLogToPhone()
+   val inbox=phone.post("log-inbox",JSONObject().put("after",0))
+   assertTrue(inbox.getString("report").contains("test diagnostic marker"))
+   assertTrue(inbox.getLong("serial")>0)
+   assertEquals("",phone.post("log-inbox",JSONObject().put("after",inbox.getLong("serial"))).getString("report"))
+  }finally{server.stop()}
+ }
  @Test fun eachServerGetsANewPinnedIdentity(){
   val first=PairServer{};val second=PairServer{}
   try{assertNotEquals(first.pin,second.pin)}finally{first.stop();second.stop()}
