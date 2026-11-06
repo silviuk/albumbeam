@@ -16,4 +16,11 @@ class MediaViewerTest{
   val error=java.io.IOException("https://example.invalid/private?token=secret")
   assertEquals("IOException",mediaError(error))
  }
+ @Test fun fullHdQualityCapsLandscapeAndPortrait(){
+  assertEquals(PhotoPixels(1920,1080),qualityPixels(PhotoPixels(3840,2160),PhotoQuality.FULL_HD))
+  assertEquals(PhotoPixels(1080,1920),qualityPixels(PhotoPixels(2160,3840),PhotoQuality.FULL_HD))
+ }
+ @Test fun sourceFileUsesDownloadParameter(){assertEquals("https://example.invalid/photo=d",photoRequest("https://example.invalid/photo",PhotoPixels(3840,2160),PhotoQuality.SOURCE_FILE))}
+ @Test fun screenQualityUsesExplicitDimensions(){assertEquals("https://example.invalid/photo=w3840-h2160",photoRequest("https://example.invalid/photo",PhotoPixels(3840,2160),PhotoQuality.SCREEN))}
+ @Test fun missingSourceDimensionsAreUnknown(){assertEquals("unknown",sourceDimensions(JSONObject()))}
 }

@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
@@ -61,6 +62,8 @@ class MainActivity:ComponentActivity() {
  private val nearby by lazy{NearbyPairing(this)}
  private var manualDisplay by mutableStateOf("")
  private var verificationDisplay by mutableStateOf("")
+ private var pickerLink by mutableStateOf("")
+ private var pickerOnComputer=false
  private var tvReport by mutableStateOf("")
  private var logReceiver:Job?=null
  var session=""; var expires=Instant.MAX; var server:PairServer?=null; var connection:Connection?=null
@@ -122,7 +125,8 @@ class MainActivity:ComponentActivity() {
    }
   }catch(e:Exception){status=e.message ?: "Pairing unavailable"}
  }
- fun authorize(refresh:Boolean=false) {
+ fun authorize(refresh:Boolean=false,computer:Boolean=false) {
+  pickerOnComputer=computer
   if(connection==null){status="Pair with your TV first.";return}
   if(refresh && session.isBlank()){status="Select photos first.";return}
   AppLog.add(if(refresh) "Phone: requesting renewed Google authorization" else "Phone: requesting Google Photos permission")
@@ -133,22 +137,22 @@ class MainActivity:ComponentActivity() {
  }
  fun authorized(r:AuthorizationResult) { AppLog.add("Phone: Google authorization granted"); token=r.accessToken ?: return; task {
   val c=connection ?: error("Pair with your TV first")
-  if(!renew) { val s=withContext(Dispatchers.IO){api(token,"sessions","POST")}; session=s.getString("id"); AppLog.add("Phone: opening Google Photos picker"); startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(s.getString("pickerUri")))) }
+  if(!renew) { val s=withContext(Dispatchers.IO){api(token,"sessions","POST",JSONObject().put("pickingConfig",JSONObject().put("maxItemCount","2000")))}; session=s.getString("id"); pickerLink=s.getString("pickerUri");AppLog.add("Phone: created multi-select Google Photos session (up to 2000 items)");if(!pickerOnComputer)startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(pickerLink))) }
   val payload=JSONObject().put("requestId",UUID.randomUUID().toString()).put("session",session).put("token",token)
   withContext(Dispatchers.IO){c.post("session",payload)}
-  token=""; status="Connected. Finish selecting in Google Photos, then use your TV remote."
+  token=""; status=if(pickerOnComputer) "Selection link ready. Open it on your computer with the same Google account, select items and finish." else "Connected. Finish selecting in Google Photos, then use your TV remote."
  } }
  fun load() {
   job?.cancel(); job=lifecycleScope.launch { try {
    status="Waiting for selection…"; AppLog.add("TV: waiting for Google Photos selection")
    withContext(Dispatchers.IO) {
-    var deadline=System.currentTimeMillis()+600_000
+    var deadline=Long.MAX_VALUE
     while(true) {
      val s=api(token,"sessions/$session"); expires=Instant.parse(s.getString("expireTime"))
      if(s.optBoolean("mediaItemsSet")) break
      val conf=s.getJSONObject("pollingConfig")
      val timeout=(conf.getString("timeoutIn").removeSuffix("s").toDouble()*1000).toLong()
-     deadline=minOf(deadline,System.currentTimeMillis()+timeout)
+     deadline=minOf(deadline,System.currentTimeMillis()+timeout,expires.toEpochMilli())
      if(System.currentTimeMillis()>=deadline) error("Selection timed out. Select again on your phone.")
      delay(maxOf(1000,(conf.getString("pollInterval").removeSuffix("s").toDouble()*1000).toLong()))
     }
@@ -210,6 +214,14 @@ class MainActivity:ComponentActivity() {
   Action("Enter 6-character TV code"){manual=true}
   if(manual)ManualPairing{manual=false}
   Action("Select photos / replace selection") {authorize()}
+  Action("Choose many on computer") {authorize(computer=true)}
+  Text("Google's picker supports multiple photos/videos, up to 2,000 per session. Search an album title to find its items. AlbumBeam cannot add a Select all or whole-album button inside Google's picker.")
+  if(pickerLink.isNotBlank()){
+   Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
+    Action("Copy selection link") {(getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("Google Photos selection link",pickerLink))}
+    Action("Share selection link") {startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT,pickerLink),"Open selection on another device"))}
+   }
+  }
   Action("Reconnect authorization") {authorize(true)}
  } }
  @Composable fun ManualPairing(close:()->Unit){
@@ -242,9 +254,13 @@ class MainActivity:ComponentActivity() {
   }}}
  }
  @Composable fun TV() {
+  var qualityOpen by remember{mutableStateOf(false)}
+  var photoQuality by remember{mutableStateOf(PhotoQuality.SCREEN)}
   var fullQr by remember{mutableStateOf(false)}
   var showCode by remember{mutableStateOf(false)}
   var selected by remember { mutableIntStateOf(-1) }; var slideshow by remember { mutableStateOf(false) }; var loaded by remember(selected) { mutableStateOf(false) }; var retryCount by remember { mutableIntStateOf(0) }
+  var qualityInfo by remember(selected){mutableStateOf("")}
+  var videoOptions by remember(selected){mutableStateOf<List<VideoQualityOption>>(emptyList())}
   val context=LocalContext.current
   val loader=remember(epoch) { ImageLoader.Builder(context).memoryCache { coil.memory.MemoryCache.Builder(context).maxSizePercent(0.18).build() }.diskCachePolicy(CachePolicy.DISABLED).build() }
   DisposableEffect(loader){onDispose{loader.shutdown()}}
@@ -289,18 +305,34 @@ class MainActivity:ComponentActivity() {
     Box(Modifier.fillMaxSize().background(Color.Black)){
      val file=item.getJSONObject("mediaFile")
      if(item.getString("type")=="VIDEO")key(file.optString("baseUrl"),token,retryCount){
-      VideoViewer(file,token,Modifier.fillMaxSize(),onEnded={if(slideshow)advance()},onInteraction={slideshow=false},onFailure={message->status=message})
-     }else key(file.optString("baseUrl"),token,retryCount){
-      PhotoViewer(file,token,loader,Modifier.fillMaxSize(),onLoaded={loaded=true},onFailure={status=it})
+      VideoViewer(file,token,Modifier.fillMaxSize(),onInfo={qualityInfo=it},onOptions={videoOptions=it},onEnded={if(slideshow)advance()},onInteraction={slideshow=false},onFailure={message->status=message})
+     }else key(file.optString("baseUrl"),token,retryCount,photoQuality){
+      PhotoViewer(file,token,loader,Modifier.fillMaxSize(),quality=photoQuality,onInfo={qualityInfo=it},onLoaded={loaded=true},onFailure={status=it})
      }
-     Row(Modifier.align(Alignment.TopCenter).background(Color.Black.copy(alpha=0.75f)).padding(8.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)){
+     Row(Modifier.align(Alignment.TopCenter).fillMaxWidth().background(Color.Black.copy(alpha=0.75f)).horizontalScroll(rememberScrollState()).padding(8.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)){
       Action("Previous"){slideshow=false;selected=(selected-1+items.size)%items.size}
       Action("Next"){slideshow=false;advance()}
       Action(if(slideshow) "Pause slideshow" else "Slideshow"){slideshow=!slideshow}
-      Action("Retry"){retryCount++;loaded=false;load()}
+      Action("Retry"){retryCount++;loaded=false;qualityInfo="";videoOptions=emptyList();load()}
+      Action("Quality & info"){slideshow=false;qualityOpen=true}
       Action("TV log → phone"){server?.sendLogToPhone()}
       Action("Grid"){selected=-1;slideshow=false}
      }
+     if(qualityOpen)Dialog(onDismissRequest={qualityOpen=false}){Surface(Modifier.padding(24.dp),shape=MaterialTheme.shapes.large){Column(Modifier.widthIn(max=650.dp).padding(24.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
+      Text("Quality & info",style=MaterialTheme.typography.headlineMedium)
+      Text("Source metadata: ${sourceDimensions(file)} • ${file.optString("mimeType")}")
+      Text(qualityInfo.ifBlank{"Waiting for decoded media details…"})
+      if(item.getString("type")=="VIDEO"){
+       Text("Google supplies a transcoded video. Original-file video download and a server resolution selector are unavailable. Source metadata does not prove delivered playback quality.")
+       if(videoOptions.size>1){Text("Available supported video tracks:");videoOptions.forEach{option->Action((if(option.selected) "✓ " else "")+option.label){option.choose();qualityOpen=false}}}
+       else if(videoOptions.size==1)Text("One supported rendition: ${videoOptions.single().label}. No alternate stream quality is available.")
+       else Text("No playable video track has been reported yet. Check the TV log if playback fails.")
+      }else{
+       PhotoQuality.entries.forEach{quality->Action((if(photoQuality==quality) "✓ " else "")+quality.label){photoQuality=quality;loaded=false;qualityInfo="";qualityOpen=false}}
+       Text("Full-size file downloads the image Google provides; display decoding remains bounded to 4K. Metadata may differ from the original upload.")
+      }
+      Action("Close"){qualityOpen=false}
+     }}}
     }
    }
   }

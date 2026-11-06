@@ -11,10 +11,10 @@ import java.security.cert.X509Certificate
 import javax.net.ssl.*
 
 val googleHttp=OkHttpClient.Builder().followRedirects(false).build()
-fun api(token:String,path:String,method:String="GET"):JSONObject {
+fun api(token:String,path:String,method:String="GET",body:JSONObject?=null):JSONObject {
  val b=Request.Builder().url("https://photospicker.googleapis.com/v1/"+path).header("Authorization","Bearer $token")
  AppLog.add("Google $method ${path.substringBefore("/").substringBefore("?")}")
- if(method!="GET") b.method(method,if(method=="POST") "{}".toRequestBody("application/json".toMediaType()) else null)
+ if(method!="GET") b.method(method,if(method=="POST") (body?.toString() ?: "{}").toRequestBody("application/json".toMediaType()) else null)
  googleHttp.newCall(b.build()).execute().use { r -> AppLog.add("Google response HTTP ${r.code}"); if(!r.isSuccessful) error("Google ${r.code}: "+when(r.code){401->"Reconnect phone";403->"Access denied; reconnect or select again";404->"Selection expired; select again";else->"Retry when online"}); return JSONObject(r.body?.string().orEmpty().ifBlank{"{}"}) }
 }
 class PairServer(private val diagnostic:(String)->Unit = {}, val receive:(JSONObject)->Unit):NanoHTTPD(0) {

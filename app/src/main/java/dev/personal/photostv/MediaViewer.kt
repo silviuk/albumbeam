@@ -37,6 +37,19 @@ fun photoPixels(width:Int,height:Int):PhotoPixels{
  val factor=minOf(1.0,3840.0/maxOf(w,h),2160.0/minOf(w,h))
  return PhotoPixels(maxOf(1,(w*factor).toInt()),maxOf(1,(h*factor).toInt()))
 }
+enum class PhotoQuality(val label:String){SCREEN("Screen quality • up to 4K"),FULL_HD("Full HD • up to 1080p"),SOURCE_FILE("Full-size photo file • render up to 4K")}
+fun photoRequest(base:String,pixels:PhotoPixels,quality:PhotoQuality)=if(quality==PhotoQuality.SOURCE_FILE) "$base=d" else "$base=w${pixels.width}-h${pixels.height}"
+fun qualityPixels(pixels:PhotoPixels,quality:PhotoQuality):PhotoPixels{
+ if(quality!=PhotoQuality.FULL_HD)return pixels
+ val scale=minOf(1.0,1920.0/maxOf(pixels.width,pixels.height),1080.0/minOf(pixels.width,pixels.height))
+ return PhotoPixels(maxOf(1,(pixels.width*scale).toInt()),maxOf(1,(pixels.height*scale).toInt()))
+}
+fun sourceDimensions(file:JSONObject):String{
+ val metadata=file.optJSONObject("mediaFileMetadata")
+ val w=metadata?.optInt("width",0) ?: 0;val h=metadata?.optInt("height",0) ?: 0
+ return if(w>0 && h>0) "${w}x${h}" else "unknown"
+}
+data class VideoQualityOption(val label:String,val selected:Boolean,val choose:()->Unit)
 fun videoReadiness(file:JSONObject)=file.optJSONObject("mediaFileMetadata")?.optJSONObject("videoMetadata")?.optString("processingStatus").orEmpty()
 
 /** Logs error types/codes only: exception messages may contain protected media URLs. */
@@ -72,35 +85,36 @@ private class PhotoSurface(context:Context,private val pixels:PhotoPixels):Surfa
  }
 }
 
-@Composable fun PhotoViewer(file:JSONObject,token:String,loader:ImageLoader,modifier:Modifier,onLoaded:()->Unit,onFailure:(String)->Unit){
+@Composable fun PhotoViewer(file:JSONObject,token:String,loader:ImageLoader,modifier:Modifier,quality:PhotoQuality,onInfo:(String)->Unit,onLoaded:()->Unit,onFailure:(String)->Unit){
  val context=LocalContext.current
  val display=(context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager).defaultDisplay
  val mode=display.supportedModes.maxByOrNull{it.physicalWidth.toLong()*it.physicalHeight} ?: display.mode
  val current=display.mode
  val multiplier=maxOf(1.0,mode.physicalWidth.toDouble()/current.physicalWidth,mode.physicalHeight.toDouble()/current.physicalHeight)
  // Keep the current display aspect ratio even if a wider cinema mode is supported.
- val pixels=photoPixels((current.physicalWidth*multiplier).toInt(),(current.physicalHeight*multiplier).toInt())
- val surface=remember{PhotoSurface(context,pixels)}
+ val pixels=qualityPixels(photoPixels((current.physicalWidth*multiplier).toInt(),(current.physicalHeight*multiplier).toInt()),quality)
+ val surface=remember(quality){PhotoSurface(context,pixels)}
+ val infoCallback by rememberUpdatedState(onInfo)
  var failure by remember{mutableStateOf("")}
  var loading by remember{mutableStateOf(true)}
  val loadedCallback by rememberUpdatedState(onLoaded)
  val failedCallback by rememberUpdatedState(onFailure)
- LaunchedEffect(file.optString("baseUrl"),token){
+ LaunchedEffect(file.optString("baseUrl"),token,quality){
   loading=true;surface.bitmap=null;surface.drawPhoto()
   val meta=file.optJSONObject("mediaFileMetadata")
   AppLog.add("Photo request ${pixels.width}x${pixels.height}; source ${meta?.optInt("width")}x${meta?.optInt("height")}; display mode ${display.mode.physicalWidth}x${display.mode.physicalHeight}")
   val request=ImageRequest.Builder(context)
-   .data(file.getString("baseUrl")+"=w${pixels.width}-h${pixels.height}")
+   .data(photoRequest(file.getString("baseUrl"),pixels,quality))
    .addHeader("Authorization","Bearer $token")
    .size(pixels.width,pixels.height).scale(Scale.FIT).precision(Precision.EXACT)
    .allowHardware(false).bitmapConfig(Bitmap.Config.ARGB_8888)
    .diskCachePolicy(CachePolicy.DISABLED)
-   .memoryCacheKey("full:${file.getString("baseUrl")}:${pixels.width}x${pixels.height}:${token.hashCode()}").build()
+   .memoryCacheKey("full:${file.getString("baseUrl")}:${pixels.width}x${pixels.height}:$quality:${token.hashCode()}").build()
   val result=loader.execute(request)
   loading=false
   if(result is SuccessResult){
    val image=(result.drawable as? BitmapDrawable)?.bitmap
-   if(image!=null){surface.bitmap=image;surface.drawPhoto();AppLog.add("Photo decoded ${image.width}x${image.height}; ${image.byteCount/1024} KiB; ${result.dataSource}");loadedCallback()}
+   if(image!=null){surface.bitmap=image;surface.drawPhoto();AppLog.add("Photo decoded ${image.width}x${image.height}; ${image.byteCount/1024} KiB; ${result.dataSource}");infoCallback("${quality.label}\nDecoded photo: ${image.width}x${image.height}\nSurface target: ${pixels.width}x${pixels.height}\nDisplay output: ${current.physicalWidth}x${current.physicalHeight}\nFull-size files are decoded to a bounded TV resolution; no cropping.");loadedCallback()}
    else{failure="Photo format could not be rendered.";failedCallback(failure)}
   }else if(result is ErrorResult){failure="Photo failed: ${mediaError(result.throwable)}. Retry to refresh access.";AppLog.add(failure);failedCallback(failure)}
  }
@@ -113,9 +127,13 @@ private class PhotoSurface(context:Context,private val pixels:PhotoPixels):Surfa
 }
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-@Composable fun VideoViewer(file:JSONObject,token:String,modifier:Modifier,onEnded:()->Unit,onInteraction:()->Unit,onFailure:(String)->Unit){
+@Composable fun VideoViewer(file:JSONObject,token:String,modifier:Modifier,onInfo:(String)->Unit,onOptions:(List<VideoQualityOption>)->Unit,onEnded:()->Unit,onInteraction:()->Unit,onFailure:(String)->Unit){
  val context=LocalContext.current
+ val infoCallback by rememberUpdatedState(onInfo);val optionsCallback by rememberUpdatedState(onOptions)
+ var decoded by remember{mutableStateOf("Decoded resolution: waiting for playback")};var trackInfo by remember{mutableStateOf("")}
  val ended by rememberUpdatedState(onEnded);val interacted by rememberUpdatedState(onInteraction);val failed by rememberUpdatedState(onFailure)
+ val outputMode=(context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager).defaultDisplay.mode
+ val outputInfo="Display output: ${outputMode.physicalWidth}x${outputMode.physicalHeight}"
  val processing=videoReadiness(file)
  var message by remember{mutableStateOf("Preparing video…")}
  if(processing=="PROCESSING" || processing=="FAILED"){
@@ -139,17 +157,36 @@ private class PhotoSurface(context:Context,private val pixels:PhotoPixels):Surfa
     message=if(state==Player.STATE_BUFFERING) "Buffering video…" else ""
     if(state==Player.STATE_ENDED)ended()
    }
-   override fun onVideoSizeChanged(size:VideoSize){AppLog.add("Video decoded ${size.width}x${size.height}; pixel ratio ${size.pixelWidthHeightRatio}")}
+   override fun onVideoSizeChanged(size:VideoSize){decoded="Decoded video: ${size.width}x${size.height}";AppLog.add("Video decoded ${size.width}x${size.height}; pixel ratio ${size.pixelWidthHeightRatio}");infoCallback("Google-provided transcode\n$decoded\n$trackInfo\n$outputInfo")}
    override fun onTracksChanged(tracks:Tracks){
+    val choices=mutableListOf<VideoQualityOption>()
+    for(group in tracks.groups)if(group.type==C.TRACK_TYPE_VIDEO)for(i in 0 until group.length)if(group.isTrackSupported(i)){
+     val format=group.getTrackFormat(i)
+     val label="${format.width}x${format.height}"+(if(format.bitrate>0) " • ${"%.1f".format(format.bitrate/1_000_000.0)} Mbps" else "")
+     choices+=VideoQualityOption(label,group.isTrackSelected(i)){
+      player.trackSelectionParameters=player.trackSelectionParameters.buildUpon().setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup,listOf(i))).build()
+      AppLog.add("Video: user selected $label")
+     }
+    }
+    optionsCallback(choices)
+
     for(group in tracks.groups)for(i in 0 until group.length)if(group.isTrackSelected(i)){
      val f=group.getTrackFormat(i)
      AppLog.add("Video track ${f.sampleMimeType}; ${f.width}x${f.height}; codecs=${f.codecs}; bitrate=${f.bitrate}")
+     if(group.type==C.TRACK_TYPE_VIDEO)trackInfo="Delivered track: ${f.width}x${f.height} • ${f.sampleMimeType} • "+(if(f.bitrate>0) "${"%.1f".format(f.bitrate/1_000_000.0)} Mbps" else "bitrate unknown")+(if(f.frameRate>0) " • ${f.frameRate} fps" else "")
+
     }
+    infoCallback("Google-provided transcode\n$decoded\n$trackInfo\n$outputInfo")
    }
    override fun onPlayWhenReadyChanged(ready:Boolean,reason:Int){if(reason==Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)interacted()}
    override fun onPositionDiscontinuity(oldPosition:Player.PositionInfo,newPosition:Player.PositionInfo,reason:Int){if(reason==Player.DISCONTINUITY_REASON_SEEK)interacted()}
    override fun onPlayerError(error:PlaybackException){message="Video failed: ${mediaError(error)}. Retry to refresh access, or send TV log to phone.";AppLog.add(message);failed(message)}
   }
+  player.trackSelectionParameters=player.trackSelectionParameters.buildUpon().setForceHighestSupportedBitrate(true).build()
+  player.addAnalyticsListener(object:androidx.media3.exoplayer.analytics.AnalyticsListener{
+   override fun onVideoDecoderInitialized(eventTime:androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,decoderName:String,initializedTimestampMs:Long,initializationDurationMs:Long){AppLog.add("Video decoder initialized: $decoderName (${initializationDurationMs}ms)")}
+   override fun onRenderedFirstFrame(eventTime:androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,output:Any,renderTimeMs:Long){AppLog.add("Video: first frame rendered")}
+  })
   player.addListener(listener)
   player.setMediaItem(MediaItem.fromUri(file.getString("baseUrl")+"=dv"));player.prepare();player.playWhenReady=true
   onDispose{player.removeListener(listener);player.release()}

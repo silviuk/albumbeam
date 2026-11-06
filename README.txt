@@ -163,3 +163,23 @@ app version, device startup information and memory usage. Secrets, protected
 media URLs, session IDs and selected filenames are excluded. A new pairing
 connection replaces the old report channel. Update both apps for log transfer.
 Physical video decoding and native display output still require device testing.
+
+Selection and actual quality in v0.1.7
+On phone Choose many on computer creates a Google Photos Picker session for up
+to 2,000 items and exposes Copy selection link / Share selection link. Open the
+link in a computer browser, sign in with the same Google account, search an album
+title, select items using Google's own picker, and finish. No desktop app or
+backend is needed. Links stop working after selection completes or expires.
+Google controls that picker: AlbumBeam cannot inject Select all, choose a whole
+existing album automatically, or keep albums synchronized.
+
+On TV open Quality & info in the viewer. Source metadata is shown separately
+from decoded resolution. Photos offer Screen (up to 4K), Full HD, or Full-size
+photo file (Google download bytes, decoded/rendered up to 4K for memory safety).
+Decoded photo and surface target dimensions are displayed after loading.
+Video defaults to highest supported bitrate, and the panel shows the actual
+decoded dimensions, delivered track format and known bitrate. Alternate quality
+buttons appear only if multiple supported video tracks actually exist; a single
+Google rendition cannot be turned into an original-quality/4K stream by the app.
+Decoder initialization and first rendered frame are logged. Google video download
+remains a transcoded rendition; no API flag selects original video bytes.
