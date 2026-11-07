@@ -1,10 +1,11 @@
 const {chromium}=require('playwright');const assert=require('node:assert/strict');const path=require('node:path');
 (async()=>{
  const browser=await chromium.launch({headless:true});
+ let activePage;let phase='setup';
  try{
   for(const mobile of [false,true]){
    const context=await browser.newContext({viewport:mobile?{width:412,height:915}:{width:1280,height:800},isMobile:mobile,hasTouch:mobile});
-   const page=await context.newPage();let destructive=0;
+   const page=await context.newPage();activePage=page;let destructive=0;
    await page.route('**/*',route=>route.request().resourceType()==='document'?route.fulfill({contentType:'text/html',body:`<!doctype html><style>.grid{display:grid;grid-template-columns:repeat(3,90px);gap:4px;margin-top:440px}.tile{width:90px;height:90px;position:relative}.tile img{width:90px;height:90px}.tile button{position:absolute;left:0;top:0;width:28px;height:28px}</style><button id="delete">Delete</button><div class="grid"></div><script>window.addTile=function(i){const tile=document.createElement('div');tile.className='tile';tile.dataset.mediaKey='media-'+i;const img=document.createElement('img');img.src='https://lh3.googleusercontent.com/fixture-'+i+'=w90';tile.append(img);const control=document.createElement('button');control.setAttribute('role','checkbox');control.setAttribute('aria-checked','false');control.id='item-'+i;control.textContent='✓';tile.append(control);tile.querySelector('button').onclick=e=>e.currentTarget.setAttribute('aria-checked',String(e.currentTarget.getAttribute('aria-checked')!=='true'));document.querySelector('.grid').append(tile)};for(let i=0;i<6;i++)addTile(i);</script>`}):route.abort());
    await page.goto('https://photos.google.com/picker-fixture');
    await page.exposeFunction('destructive',()=>destructive++);await page.evaluate(()=>document.querySelector('#delete').onclick=()=>window.destructive());
@@ -32,5 +33,5 @@ const {chromium}=require('playwright');const assert=require('node:assert/strict'
    assert.equal(destructive,0);await click(helper.getByRole('button',{name:'Close',exact:true}));assert.equal(await helper.count(),0);
    await context.close();console.log(`PASS ${mobile?'touch':'desktop'} range, selection, scroll loading, stop, unloaded anchors, blob rejection and no destructive clicks`);
   }
- }finally{await browser.close()}
+ }catch(error){console.error("Browser fixture state",await activePage?.evaluate(()=>({text:document.querySelector("#photosbeam-helper")?.shadowRoot?.textContent,selected:[...document.querySelectorAll("[role=checkbox]")].map(x=>[x.id,x.getAttribute("aria-checked")])})));throw error}finally{await browser.close()}
 })().catch(error=>{console.error(error);process.exit(1)});

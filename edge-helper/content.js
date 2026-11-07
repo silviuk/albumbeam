@@ -50,9 +50,10 @@
   async function run(keys, selected){
     if(busy)return;
     busy=true;abort=new AbortController();
+    for(const control of buttons.querySelectorAll('button'))if(control.textContent!=='Stop')control.disabled=true;
     try{const n=await core.applyKeys(keys,selected,key=>scan().find(x=>x.key===key),item=>item.el.click(),abort.signal,count=>say(`${selected?'Selecting':'Clearing'}: ${count} confirmed changes…`));say(abort.signal.aborted?'Stopped. Confirmed selections are kept.':`${n} changes confirmed by Google. Use Google’s Done button when finished.`);}
     catch(error){watch=false;watchButton.setAttribute('aria-pressed','false');say(error.message);}
-    finally{busy=false;refresh();}
+    finally{busy=false;for(const control of buttons.querySelectorAll('button'))control.disabled=false;refresh();}
   }
   button(buttons,'Range start',()=>{arm='start';say('Tap the first photo/video selection control.');});
   button(buttons,'Range end',()=>{if(!anchor){say('Set a range start first.');return;}arm='end';say('Tap the last loaded photo/video selection control.');});
