@@ -1,9 +1,7 @@
 package dev.personal.photostv
 
-import android.app.*
 import android.content.*
 import android.net.Uri
-import android.os.IBinder
 import fi.iki.elonen.NanoHTTPD
 import kotlinx.coroutines.*
 import org.json.JSONArray
@@ -52,7 +50,7 @@ class NativeMediaServer(private val context:Context,private val uris:List<Uri>,p
  }
  override fun serve(session:IHTTPSession):Response {
   if(session.headers["authorization"]!="Bearer $grant")return newFixedLengthResponse(Response.Status.FORBIDDEN,"text/plain","Rejected")
-  if(session.uri=="/stop" && session.method==Method.POST){context.stopService(Intent(context,PhoneMediaService::class.java));return newFixedLengthResponse("{}")}
+  if(session.uri=="/stop" && session.method==Method.POST){context.stopService(NativeSharing.intent(context));return newFixedLengthResponse("{}")}
   if(session.method!=Method.GET && session.method!=Method.HEAD)return newFixedLengthResponse(Response.Status.METHOD_NOT_ALLOWED,"text/plain","")
   val index=session.uri.removePrefix("/media/").toIntOrNull()
   val uri=if(session.uri.startsWith("/media/") && index!=null)uris.getOrNull(index) else null
@@ -81,40 +79,10 @@ class NativeMediaServer(private val context:Context,private val uris:List<Uri>,p
 
 /** Started only by an explicit selection while the companion is visible. Never restarted after reboot. */
 data class NativeShareRequest(val uris:List<Uri>,val encrypted:Boolean,val result:CompletableDeferred<JSONObject>)
-class PhoneMediaService:Service(){
- private val scope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
- @Volatile private var server:NativeMediaServer?=null
- private var preparing:Job?=null
- companion object {
-  @Volatile var pending:NativeShareRequest?=null
-  @Volatile var running=false
- }
- override fun onBind(intent:Intent?):IBinder?=null
- override fun onStartCommand(intent:Intent?,flags:Int,startId:Int):Int {
-  if(intent?.action=="stop"){stopSelf();return START_NOT_STICKY}
-  val manager=getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-  manager.createNotificationChannel(NotificationChannel("media-sharing","TV media sharing",NotificationManager.IMPORTANCE_LOW))
-  val stop=PendingIntent.getService(this,2,Intent(this,PhoneMediaService::class.java).setAction("stop"),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-  val open=PendingIntent.getActivity(this,1,Intent(this,MainActivity::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-  val notification=Notification.Builder(this,"media-sharing").setSmallIcon(dev.personal.photostv.R.drawable.ic_albumbeam).setContentTitle("AlbumBeam is sharing with your TV")
-   .setContentText("Keep this phone connected. Tap Stop to end media access.").setContentIntent(open).setOngoing(true).addAction(Notification.Action.Builder(null,"Stop",stop).build()).build()
-  if(android.os.Build.VERSION.SDK_INT>=29)startForeground(10,notification,android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE) else startForeground(10,notification)
-  val request=pending;pending=null
-  if(request==null){stopSelf();return START_NOT_STICKY}
-  preparing?.cancel()
-  preparing=scope.launch{
-   var candidate:NativeMediaServer?=null
-   try{
-    server?.stop();candidate=NativeMediaServer(this@PhoneMediaService,request.uris,request.encrypted)
-    ensureActive();server=candidate;candidate.start()
-    val payload=candidate.selection();ensureActive();running=true
-    request.result.complete(payload)
-    AppLog.add("Phone: native media sharing started (${request.uris.size} items); ${if(request.encrypted)"HTTPS" else "HTTP"}; bytes unchanged")
-   }catch(e:Exception){candidate?.stop();request.result.completeExceptionally(e);if(e !is CancellationException)stopSelf()}
-  }
-  return START_NOT_STICKY
- }
- override fun onDestroy(){running=false;server?.stop();scope.cancel();AppLog.add("Phone: native media access revoked");super.onDestroy()}
+object NativeSharing {
+ @Volatile var pending:NativeShareRequest?=null
+ @Volatile var running=false
+ fun intent(context:Context)=Intent().setClassName(context,"dev.personal.photostv.PhoneMediaService")
 }
 fun nativeFile(file:JSONObject)=file.optString("nativePin").isNotBlank()
 fun mediaUrl(file:JSONObject,suffix:String)=file.getString("baseUrl")+if(nativeFile(file))"" else suffix

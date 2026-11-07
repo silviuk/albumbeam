@@ -102,7 +102,7 @@ class MainActivity:ComponentActivity() {
  }
  private var tvReport by mutableStateOf("")
  private var logReceiver:Job?=null
- var session=""; var expires=Instant.MAX; var server:PairServer?=null; var connection by mutableStateOf<Connection?>(null)
+ @Volatile var session=""; var expires=Instant.MAX; var server:PairServer?=null; var connection by mutableStateOf<Connection?>(null)
  var job:Job?=null; var renew=false
  private var networkWatch:Job?=null
  private fun localAddress()=NetworkInterface.getNetworkInterfaces().toList().flatMap{it.inetAddresses.toList()}.firstOrNull{it is java.net.Inet4Address && it.isSiteLocalAddress}?.hostAddress
@@ -120,15 +120,15 @@ class MainActivity:ComponentActivity() {
    try{
     val c=connection ?: error("Connect to the TV first")
     val request=NativeShareRequest(uris,encryptMedia,CompletableDeferred())
-    PhoneMediaService.pending=request
-    startForegroundService(Intent(this,PhoneMediaService::class.java))
+    NativeSharing.pending=request
+    startForegroundService(NativeSharing.intent(this))
     status="Preparing selected phone/cloud media…"
     val payload=withTimeout(60000){request.result.await()}
     withContext(Dispatchers.IO){c.post("session",payload)}
     session=""
     status="Sharing ${uris.size} items. Keep the phone connected; cloud items may need downloading by their provider."
-   }catch(e:Exception){stopService(Intent(this,PhoneMediaService::class.java));throw e}
-   finally{PhoneMediaService.pending=null;nativeBusy=false}
+   }catch(e:Exception){stopService(NativeSharing.intent(this));throw e}
+   finally{NativeSharing.pending=null;nativeBusy=false}
   }
  }
  @Suppress("DEPRECATION")
@@ -163,7 +163,7 @@ class MainActivity:ComponentActivity() {
  }
  private fun forgetPairing(){
   reconnectJob?.cancel();logReceiver?.cancel();nearby.stopDiscovery();connection=null;hasSavedPairing=false
-  stopService(Intent(this,PhoneMediaService::class.java))
+  stopService(NativeSharing.intent(this))
   pairingStore.clear(if(BuildConfig.FLAVOR=="tv")"tv" else "phone")
   if(BuildConfig.FLAVOR=="tv"){end(false);pairing()}else status="Pairing forgotten. Forget this phone on the TV before pairing again."
   AppLog.add("Device pairing removed locally")
@@ -179,7 +179,7 @@ class MainActivity:ComponentActivity() {
     try{
      val reply=withContext(Dispatchers.IO){c.post("log-inbox",JSONObject().put("after",serial))}
      if(session.isBlank())session=reply.optString("session")
-     if(PhoneMediaService.running && !nativeBusy && !reply.optBoolean("nativeSharing"))stopService(Intent(this@MainActivity,PhoneMediaService::class.java))
+     if(NativeSharing.running && !nativeBusy && !reply.optBoolean("nativeSharing"))stopService(NativeSharing.intent(this@MainActivity))
      failures=0;serial=reply.optLong("serial",serial)
      tvState=reply.optString("state")
      val report=reply.optString("report")
@@ -277,7 +277,7 @@ class MainActivity:ComponentActivity() {
     selectionStep="Connecting this selection to the TV…"
     val payload=JSONObject().put("requestId",UUID.randomUUID().toString()).put("session",session).put("token",access)
     withContext(Dispatchers.IO){c.post("session",payload)}
-    stopService(Intent(this@MainActivity,PhoneMediaService::class.java))
+    stopService(NativeSharing.intent(this@MainActivity))
     status=if(pickerOnComputer) "Selection link ready. Open it on your computer using the same Google account." else "Connected. Select your photos and videos in Google Photos, then finish."
     selectionStep="Ready — copy or share the link below"
     if(!renew && !pickerOnComputer)startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(pickerLink)))
@@ -420,7 +420,7 @@ class MainActivity:ComponentActivity() {
          OutlinedButton(enabled=connection!=null && !nativeBusy,onClick={filePicker.launch(arrayOf("image/*","video/*"))}){Text("Choose files on phone")}
          Text("For original 4K60 files, choose a local camera or downloaded original file. System picker transcoding is disabled; AlbumBeam streams the provided bytes unchanged.",style=MaterialTheme.typography.bodySmall)
          if(nativeBusy)LinearProgressIndicator(Modifier.fillMaxWidth())
-         OutlinedButton(onClick={stopService(Intent(this@MainActivity,PhoneMediaService::class.java));status="Phone media sharing stopped"}){Text("Stop phone sharing")}
+         OutlinedButton(onClick={stopService(NativeSharing.intent(this@MainActivity));status="Phone media sharing stopped"}){Text("Stop phone sharing")}
         }}
         Text("Selecting many photos",style=MaterialTheme.typography.titleLarge)
         Text("Both pickers support multiple items, subject to their limits. AlbumBeam cannot add Select all, whole-album, day or week controls inside Google’s or Android’s picker. Search an album or date in Google’s selection screen, then select the items it offers. Use any group selection controls your picker provides.")
