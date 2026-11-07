@@ -84,9 +84,15 @@ class VideoSourceTest {
   val directory=java.nio.file.Files.createTempDirectory("video-replay-tls").toFile()
   val replay=VideoReplayBuffer(directory,client(),1024L*1024)
   try{
-   assertTrue(replay.open("https://127.0.0.1:${source.listeningPort}/video",emptyMap()))
-   val bytes=ByteArray(32);assertEquals(32,replay.read(data.size-32L,bytes,0,32));assertArrayEquals(data.takeLast(32).toByteArray(),bytes)
-   assertTrue(replay.open("https://127.0.0.1:${source.listeningPort}/video",emptyMap()));assertEquals(32,replay.read(44,bytes,0,32));assertArrayEquals(data.copyOfRange(44,76),bytes);assertEquals(1,count.get())
+   assertTrue("Whole-file TLS response should use buffer: "+AppLog.export().takeLast(2000),replay.open("https://127.0.0.1:${source.listeningPort}/video",emptyMap()))
+   fun readFully(position:Long):ByteArray {
+    val bytes=ByteArray(32);var offset=0
+    while(offset<bytes.size){val received=replay.read(position+offset,bytes,offset,bytes.size-offset);assertTrue("Unexpected EOF at ${position+offset}",received>0);offset+=received}
+    return bytes
+   }
+   assertArrayEquals(data.takeLast(32).toByteArray(),readFully(data.size-32L))
+   assertTrue("Second open must reuse buffer",replay.open("https://127.0.0.1:${source.listeningPort}/video",emptyMap()))
+   assertArrayEquals(data.copyOfRange(44,76),readFully(44));assertEquals("Only one whole-file request",1,count.get())
   }finally{replay.close();assertTrue(directory.listFiles().isNullOrEmpty());directory.deleteRecursively();source.stop()}
  }
 

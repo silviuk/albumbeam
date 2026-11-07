@@ -33,3 +33,8 @@ dependencies {
  androidTestImplementation("androidx.test.ext:junit:1.3.0")
  androidTestImplementation("androidx.test:runner:1.7.0")
 }
+
+// Keep network/buffer regression failures diagnosable in CI, including coroutine stacks.
+tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+ testLogging.exceptionFormat=org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+}
