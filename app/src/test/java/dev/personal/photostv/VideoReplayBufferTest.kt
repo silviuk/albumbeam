@@ -98,4 +98,43 @@ class VideoReplayBufferTest{
   }finally{release.countDown();replay.close()}
  }
 
+ @Test fun oversizedResponseIsHandedToPlayerWithoutAnotherRequest(){
+  val bytes=ByteArray(128){it.toByte()};val factory=Factory({bytes.toResponseBody()});val handoff=VideoResponseHandoff(factory)
+  val replay=VideoReplayBuffer(directory,handoff,64){handoff.offer(it)}
+  try{
+   assertFalse(replay.open(url,emptyMap()))
+   val request=Request.Builder().url(url).build()
+   handoff.newCall(request).execute().use{assertArrayEquals(bytes,it.body!!.bytes())}
+   assertEquals(1,factory.requests.get());assertTrue(replay.progress().oversized)
+   assertEquals(128L,replay.progress().total);assertEquals(64L,replay.progress().budget)
+  }finally{replay.close();handoff.close()}
+ }
+ @Test fun partialResponseIsHandedToPlayerWithoutDiscardingFirstOpen(){
+  val factory=Factory({ByteArray(128).toResponseBody()},206);val handoff=VideoResponseHandoff(factory)
+  val replay=VideoReplayBuffer(directory,handoff,1024){handoff.offer(it)}
+  try{
+   assertFalse(replay.open(url,emptyMap()))
+   handoff.newCall(Request.Builder().url(url).build()).execute().use{assertEquals(206,it.code);assertEquals(128,it.body!!.bytes().size)}
+   assertEquals(1,factory.requests.get())
+  }finally{replay.close();handoff.close()}
+ }
+ @Test fun initialNetworkFailureIsReportedInsteadOfSilentlyMakingAnotherDownload(){
+  val calls=AtomicInteger()
+  val factory=Call.Factory{request->object:Call{
+   override fun request()=request
+   override fun timeout()=Timeout.NONE
+   override fun isCanceled()=false
+   override fun isExecuted()=true
+   override fun cancel(){}
+   override fun clone():Call=error("Unused")
+   override fun enqueue(callback:Callback)=error("Unused")
+   override fun execute():Response{calls.incrementAndGet();throw IOException("failed")}
+  }}
+  val replay=VideoReplayBuffer(directory,factory,1024)
+  try{
+   try{replay.open(url,emptyMap());fail("Network failure hidden")}catch(expected:IOException){}
+   assertEquals(1,calls.get());assertFalse(replay.open(url,emptyMap()));assertEquals(1,calls.get())
+  }finally{replay.close()}
+ }
+
 }

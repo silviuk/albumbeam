@@ -171,6 +171,9 @@ private class ZoomVideoFrame(context:Context,player:Player):FrameLayout(context)
  val outputInfo="Display output: ${outputMode.physicalWidth}x${outputMode.physicalHeight} @ ${outputMode.refreshRate} Hz\nTransport: ${mediaTransport(file)}"
  val processing=videoReadiness(file)
  var message by remember{mutableStateOf("Preparing video…")}
+ var failureMessage by remember{mutableStateOf("")}
+ var preparation by remember{mutableStateOf("")}
+
  if(processing=="PROCESSING" || processing=="FAILED"){
   val reason=if(processing=="PROCESSING") "Google Photos is still processing this video. Retry later." else "Google Photos could not process this video."
   LaunchedEffect(reason){AppLog.add("Video status: $processing");failed(reason)}
@@ -180,9 +183,11 @@ private class ZoomVideoFrame(context:Context,player:Player):FrameLayout(context)
  val hardwareMimes=remember{hardwareVideoMimes()}
  val http=remember{mediaClient(file,http1Only)}
  val compatibilityPreferred=remember{java.util.concurrent.atomic.AtomicBoolean()}
- val calls=remember{if(nativeFile(file) || http1Only)http else VideoCallFactory(http,videoHttpClient(true),preferCompatibility=compatibilityPreferred)}
+ val rawCalls=remember{if(nativeFile(file) || http1Only)http else VideoCallFactory(http,videoHttpClient(true),preferCompatibility=compatibilityPreferred)}
+ val handoff=remember{if(nativeFile(file))null else VideoResponseHandoff(rawCalls)}
+ val calls=handoff ?: rawCalls
  val sourceFactory=remember{OkHttpDataSource.Factory(calls).setUserAgent("PhotosBeam/${BuildConfig.VERSION_NAME}").setTransferListener(VideoTransferLog())}
- val replay=remember{if(nativeFile(file))null else VideoReplayBuffer(java.io.File(context.cacheDir,"video-replay"),calls,videoReplayBudget(context.cacheDir))}
+ val replay=remember{if(nativeFile(file))null else VideoReplayBuffer(java.io.File(context.cacheDir,"video-replay"),calls,videoReplayBudget(context.cacheDir)){handoff?.offer(it) ?: false}}
  val replayHeaders=remember{mutableStateOf<Map<String,String>>(emptyMap())}
  val playbackFactory=remember{if(replay==null)sourceFactory else androidx.media3.datasource.DataSource.Factory{ReplayVideoDataSource(replay,sourceFactory){replayHeaders.value}.also{it.addTransferListener(VideoTransferLog())}}}
  var automaticTrack by remember{mutableStateOf(true)}
@@ -197,7 +202,7 @@ private class ZoomVideoFrame(context:Context,player:Player):FrameLayout(context)
  val player=remember{
   AppLog.add("Video: preparing progressive playback; processing=${processing.ifBlank{"unspecified"}}; MIME=${file.optString("mimeType")}")
   ExoPlayer.Builder(context,DefaultRenderersFactory(context).setMediaCodecSelector(hardwareFirstDecoderSelector()).setEnableDecoderFallback(true))
-   .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(5000,20000,750,1500).setPrioritizeTimeOverSizeThresholds(true).build())
+   .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(3000,10000,750,1500).setTargetBufferBytes(48*1024*1024).setPrioritizeTimeOverSizeThresholds(false).build())
    .setMediaSourceFactory(DefaultMediaSourceFactory(playbackFactory,streamingExtractors(fastStartup)).setLoadErrorHandlingPolicy(androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy(1))).build()
  }
  DisposableEffect(player){
@@ -217,7 +222,7 @@ private class ZoomVideoFrame(context:Context,player:Player):FrameLayout(context)
   val listener=object:Player.Listener{
    override fun onPlaybackStateChanged(state:Int){
     AppLog.add("Video playback state: "+when(state){Player.STATE_BUFFERING->"BUFFERING";Player.STATE_READY->"READY";Player.STATE_ENDED->"ENDED";else->"IDLE"})
-    stateCallback(when(state){Player.STATE_BUFFERING->"Buffering";Player.STATE_READY->if(player.playWhenReady) "Playing" else "Paused";Player.STATE_ENDED->"Ended";else->"Idle"})
+    stateCallback(when(state){Player.STATE_BUFFERING->if(player.playWhenReady)"Buffering" else "Paused";Player.STATE_READY->if(player.playWhenReady) "Playing" else "Paused";Player.STATE_ENDED->"Ended";else->"Idle"})
     message=if(state==Player.STATE_BUFFERING) "Buffering video…" else ""
     if(state==Player.STATE_ENDED)ended()
    }
@@ -257,7 +262,7 @@ private class ZoomVideoFrame(context:Context,player:Player):FrameLayout(context)
    }
    override fun onPlayWhenReadyChanged(ready:Boolean,reason:Int){stateCallback(if(!ready) "Paused" else if(player.playbackState==Player.STATE_READY) "Playing" else "Buffering");if(reason==Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)interacted()}
    override fun onPositionDiscontinuity(oldPosition:Player.PositionInfo,newPosition:Player.PositionInfo,reason:Int){if(reason==Player.DISCONTINUITY_REASON_SEEK)interacted()}
-   override fun onPlayerError(error:PlaybackException){message="Video failed: ${mediaError(error)}. "+(if(generateSequence<Throwable>(error){it.cause}.any{it is java.net.SocketTimeoutException}) "Media delivery timed out before playback could proceed. Try the HTTP/1.1 connection option in Quality & info, or select files on the phone." else "Retry to refresh access, or send TV log to phone.");AppLog.add(message);failed(message)}
+   override fun onPlayerError(error:PlaybackException){failureMessage="Video failed: ${mediaError(error)}. "+(if(generateSequence<Throwable>(error){it.cause}.any{it is java.net.SocketTimeoutException}) "Media delivery timed out before playback could proceed. Try the HTTP/1.1 connection option in Quality & info, or select files on the phone." else "Retry to refresh access, or send TV log to phone.");AppLog.add(failureMessage);failed(failureMessage)}
   }
   player.trackSelectionParameters=player.trackSelectionParameters.buildUpon().setPreferredVideoMimeTypes(*hardwareMimes.toTypedArray()).setForceHighestSupportedBitrate(true).build()
   player.addAnalyticsListener(object:androidx.media3.exoplayer.analytics.AnalyticsListener{
@@ -276,10 +281,19 @@ private class ZoomVideoFrame(context:Context,player:Player):FrameLayout(context)
     AppLog.add("Video: player connection ${if(http1Only)"HTTP/1.1 compatibility" else "automatic HTTP/2 or HTTP/1.1"}; hardware-first decoder selection")
     player.prepare()
    }catch(e:CancellationException){throw e}
-   catch(e:Exception){message="Video source failed: ${mediaError(e)}. Retry or use phone media.";AppLog.add(message);failed(message);stateCallback("Source connection failed")}
+   catch(e:Exception){failureMessage="Video source failed: ${mediaError(e)}. Retry or use phone media.";AppLog.add(failureMessage);failed(failureMessage);stateCallback("Source connection failed")}
   }
-  val progressJob=playbackScope.launch{while(isActive){position=player.currentPosition.coerceAtLeast(0);duration=player.duration.takeIf{it>0} ?: 0L;delay(if(chromeNow)500 else 2000)}}
-  onDispose{prepareJob.cancel();progressJob.cancel();controlCallback(null);optionsCallback(emptyList());player.removeListener(listener);replay?.close();player.release()}
+  val progressJob=playbackScope.launch{while(isActive){position=player.currentPosition.coerceAtLeast(0);duration=player.duration.takeIf{it>0} ?: 0L
+    preparation=if(player.playbackState==Player.STATE_BUFFERING)replay?.progress()?.let{p->
+     fun mib(bytes:Long)="%.0f".format(bytes/1048576.0)
+     if(p.oversized && p.requestedOffset>p.total*0.9 && p.total>0)"Reading metadata near the end: ${mib(p.directReceived)} / ${mib(p.total)} MiB. Google ignored seeking. Use a phone file for faster startup."
+     else if(p.oversized)"Large Google video: ${mib(p.total)} MiB; TV buffer budget ${mib(p.budget)} MiB. Free TV storage or stream a local phone file for better startup."
+     else if(!p.buffered)"Connecting video stream…"
+     else if(p.total>0)"Preparing Google video: ${mib(p.received)} / ${mib(p.total)} MiB"
+     else "Waiting for Google's video response…"
+    }.orEmpty() else ""
+    delay(if(chromeNow || player.playbackState==Player.STATE_BUFFERING)500 else 2000)}}
+  onDispose{prepareJob.cancel();progressJob.cancel();controlCallback(null);optionsCallback(emptyList());player.removeListener(listener);replay?.close();handoff?.close();player.release()}
  }
  Box(modifier.background(Color.Black)){
   AndroidView(factory={ZoomVideoFrame(it,player)},update={it.updateViewport(viewport)},modifier=Modifier.fillMaxSize())
@@ -287,7 +301,8 @@ private class ZoomVideoFrame(context:Context,player:Player):FrameLayout(context)
    if(duration>0)LinearProgressIndicator(progress={ (position.toDouble()/duration).toFloat().coerceIn(0f,1f)},modifier=Modifier.fillMaxWidth())
    Text("${playbackTime(position)} / ${if(duration>0)playbackTime(duration)else "--:--"}  •  ${if(zoomMode)"D-pad pan  •  OK zoom  •  Back fit" else "↑/↓ item  •  ←/→ seek 10s  •  OK play/pause  •  Hold OK actions"}")
   }
-  if(message.isNotBlank())Text(message,Modifier.padding(top=100.dp,start=24.dp))
+  val feedback=failureMessage.ifBlank{if(message.isNotBlank())listOf(message,preparation).filter{it.isNotBlank()}.joinToString("\n")else ""}
+  if(feedback.isNotBlank())Text(feedback,Modifier.align(androidx.compose.ui.Alignment.Center).widthIn(max=620.dp).background(Color.Black.copy(alpha=.8f)).padding(18.dp),color=Color(0xFFE8E8E8),style=MaterialTheme.typography.bodyMedium)
  }
 }
 

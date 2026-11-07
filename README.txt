@@ -404,3 +404,30 @@ selection extension or add controls to Google's Picker. Edge/Google may offer to
 open another app after the initial launch; remain in the browser for webpage tools.
 Google authorization still uses the existing Android authorization flow. No new
 Google Cloud configuration, package IDs, permissions or signing keys are required.
+
+TV controls, dark text and large-video startup in v0.2.7
+The TV viewer has a compact direct bar: Previous, Play/Pause (or slideshow), Next,
+Zoom -/+, Fit, Quality, Retry, Send log and Grid, plus photo warmth on photos.
+It keeps the 3-second idle timeout. TV actions use 40dp height; viewer actions 36dp,
+smaller labels/padding and clear light focus. TV root/dialogs explicitly provide
+readable light foregrounds for both Material libraries; settings no longer inherit
+black text. The full-screen white QR has a dark Close-button backing.
+
+For oversized and range-supported videos, the first opened response is handed to
+the player instead of closing it and making another request. Failed buffer opens
+are reported before the loader's bounded retry, rather than silently repeating a
+failed download. Playback errors stay visible. Preparation shows cached bytes or
+large-file/end-metadata progress and offers TV storage settings. The video sample
+buffer now has a 48 MiB target and 3–10s timing limits; startup remains 750ms.
+
+The supplied log shows a 604 MB video and only about 340 MB of TV disk budget.
+Google ignored requests for about 169 KB of metadata at the end and returned the
+whole file; first frame took 91s, decoder initialization only 303ms. Reusing the
+initial response removes an unnecessary header wait, but cannot make that server
+serve byte ranges or put MP4 initialization metadata first. Freeing TV space can
+allow the existing seek buffer; a local phone file supports actual range serving.
+
+SmartTube's source selects DASH/HLS/SABR and other YouTube formats when available.
+Google Photos Picker documents a download rendition (=dv), with no corresponding
+DASH/HLS manifest option. Changing playback engines cannot create a missing stream.
+No source encoding, resolution or frame rate is changed by this update.

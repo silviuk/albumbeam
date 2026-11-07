@@ -9,7 +9,7 @@ import java.util.concurrent.Executors
 /** One sequential response for servers that ignore Range. The extractor can seek back to
  * already downloaded bytes without reopening Google. Only media bytes touch private disk.
  * Servers that return 206 retain the normal range-capable Media3 path. */
-class VideoReplayBuffer(private val directory:File,private val calls:Call.Factory,private val maxBytes:Long){
+class VideoReplayBuffer(private val directory:File,private val calls:Call.Factory,private val maxBytes:Long,private val handoff:(Response)->Boolean={false}){
  private val lock=java.lang.Object()
  private val worker=Executors.newSingleThreadExecutor{r->Thread(r,"video-replay-buffer").apply{isDaemon=true}}
  private var started=false
@@ -23,6 +23,15 @@ class VideoReplayBuffer(private val directory:File,private val calls:Call.Factor
  private var disk:RandomAccessFile?=null
  private var call:Call?=null
  private var expected=-1L
+ private var failureReported=false
+ private var tooLarge=false
+ private var directOffset=0L
+ private var directBytes=0L
+ data class Progress(val received:Long,val total:Long,val budget:Long,val oversized:Boolean,val requestedOffset:Long,val directReceived:Long,val buffered:Boolean)
+ fun progress():Progress=synchronized(lock){Progress(downloaded,expected,maxBytes,tooLarge,directOffset,directBytes,mode==1)}
+ fun directOpen(offset:Long)=synchronized(lock){directOffset=offset;directBytes=0L}
+ fun directRead(count:Int)=synchronized(lock){directBytes+=count}
+
  val length:Long get()=synchronized(lock){expected}
  fun open(url:String,headers:Map<String,String>,cancelled:()->Boolean={false}):Boolean=synchronized(lock){
   if(!started){
@@ -31,6 +40,10 @@ class VideoReplayBuffer(private val directory:File,private val calls:Call.Factor
   }
   while(mode==0){checkOpen(cancelled);waitForProgress()}
   checkOpen(cancelled)
+  if(mode==3){
+   if(!failureReported){failureReported=true;throw failure!!}
+   mode=2
+  }
   mode==1
  }
  private fun waitForProgress(){try{lock.wait(100)}catch(e:InterruptedException){Thread.currentThread().interrupt();throw java.io.InterruptedIOException("Video buffer interrupted")}}
@@ -46,7 +59,7 @@ class VideoReplayBuffer(private val directory:File,private val calls:Call.Factor
    val bytes=minOf(count.toLong(),downloaded-position).toInt()
    disk!!.seek(position);disk!!.readFully(target,offset,bytes);return bytes
   }
-  failure?.let{throw it}
+  failure?.let{failureReported=true;throw it}
   -1
  }
  private fun download(url:String,headers:Map<String,String>){
@@ -56,15 +69,19 @@ class VideoReplayBuffer(private val directory:File,private val calls:Call.Factor
     .header("Range","bytes=0-").header("Accept-Encoding","identity").build()
    val opening=calls.newCall(request)
    synchronized(lock){if(closed)return;call=opening}
-   opening.execute().use{response->
+   val response=opening.execute()
+   var handedOff=false
+   try{
     if(!response.isSuccessful)throw IOException("Video download HTTP ${response.code}")
     val body=response.body ?: throw IOException("Empty video response")
     synchronized(lock){
      if(closed)return
      // No guessing from Accept-Ranges: the actual 206 response decides.
-     if(response.code==206 || body.contentLength()>maxBytes){
+     expected=body.contentLength();tooLarge=response.code!=206 && expected>maxBytes
+     if(response.code==206 || tooLarge){
+      handedOff=handoff(response)
       mode=2;lock.notifyAll()
-      AppLog.add(if(response.code==206)"Video buffer: server supports ranges; using direct range streaming" else "Video buffer: file exceeds disk budget; using direct streaming")
+      AppLog.add(if(response.code==206)"Video buffer: server supports ranges; using direct range streaming" else "Video buffer: file exceeds disk budget; bytes=$expected; budget=$maxBytes; continuing the initial response")
       return
      }
      if(response.code!=200)throw IOException("Unexpected video response")
@@ -91,9 +108,9 @@ class VideoReplayBuffer(private val directory:File,private val calls:Call.Factor
      expected=downloaded;finished=true;lock.notifyAll()
      AppLog.add("Video buffer: download complete; $downloaded bytes reusable until leaving this video")
     }
-   }
+   }finally{if(!handedOff)response.close()}
   }catch(error:Exception){
-   synchronized(lock){if(!closed){failure=if(error is IOException)error else IOException("Video buffer failed",error);mode=2;lock.notifyAll();AppLog.add("Video buffer: ${error.javaClass.simpleName}; next open uses direct streaming")}}
+   synchronized(lock){if(!closed){failure=if(error is IOException)error else IOException("Video buffer failed",error);mode=3;lock.notifyAll();AppLog.add("Video buffer: ${error.javaClass.simpleName}; reporting failure before an explicit loader retry")}}
   }
  }
  fun wakeReaders()=synchronized(lock){lock.notifyAll()}

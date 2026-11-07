@@ -1,0 +1,22 @@
+PhotosBeam 0.2.7 — readable compact TV controls and startup response reuse
+
+Evidence:
+- v0.2.6 log: Google file 604,366,239 bytes exceeds ~340 MB disk budget; first
+  response discarded, another 11s header wait, ignored range to end metadata, then
+  whole-file read and another reopen. First frame 91,137ms; decoder 303ms.
+- The 33 MB clip was cancelled during tail preparation after ~3s, before an error.
+- This is not proof of a decoder/codec limitation; server/file delivery dominates.
+
+Changes:
+- Pass the initial response to the player for oversize/206 bypass paths.
+- Propagate initial buffer failure instead of hidden extra network attempts.
+- Persistent error feedback and preparation/byte progress, including low disk.
+- Video sample buffering: target 48 MiB, 3–10s window, 750ms startup threshold.
+- Compact actions and more direct viewer controls; three-second idle behavior.
+- Explicit light text colors for both Material libraries, settings surfaces and QR.
+- TV storage settings reachable from settings and viewing options.
+
+Validation pending: compilation, byte/ownership/retry regressions, existing full
+suites, lint, signed APK verification. Physical Chromecast measurements unavailable.
+Google's download latency and non-range tail-metadata delivery remain constraints;
+this release does not promise instant startup for the 604 MB cloud file.

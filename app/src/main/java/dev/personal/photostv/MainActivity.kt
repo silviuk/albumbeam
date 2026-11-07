@@ -202,9 +202,9 @@ class MainActivity:ComponentActivity() {
   java.io.File(cacheDir,"video-replay").listFiles()?.forEach{it.delete()};photoWarmth=getSharedPreferences("settings",MODE_PRIVATE).getFloat("photo-warmth",0f).coerceIn(0f,1f); encryptMedia=getSharedPreferences("settings",MODE_PRIVATE).getBoolean("encrypt-media",true); if(BuildConfig.FLAVOR=="phone")enableEdgeToEdge(); AppLog.add("Started ${BuildConfig.FLAVOR} app v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}), Android ${android.os.Build.VERSION.RELEASE}, ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"); window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
   setContent {
    val dark=isSystemInDarkTheme()
-   val colors=if(BuildConfig.FLAVOR=="tv")darkColorScheme(background=Color.Black,surface=Color(0xFF0D0D0F),primary=Color(0xFFE0D3BD),onSurface=Color(0xFFDADADA)) else if(android.os.Build.VERSION.SDK_INT>=31){if(dark)dynamicDarkColorScheme(this)else dynamicLightColorScheme(this)}else if(dark)darkColorScheme()else lightColorScheme()
+   val colors=if(BuildConfig.FLAVOR=="tv")darkColorScheme(background=Color.Black,surface=Color(0xFF0D0D0F),primary=Color(0xFFE0D3BD),onSurface=Color(0xFFE8E8E8),onBackground=Color(0xFFE8E8E8),onSurfaceVariant=Color(0xFFCCCCCC)) else if(android.os.Build.VERSION.SDK_INT>=31){if(dark)dynamicDarkColorScheme(this)else dynamicLightColorScheme(this)}else if(dark)darkColorScheme()else lightColorScheme()
    MaterialTheme(colorScheme=colors){
-    if(BuildConfig.FLAVOR=="tv")androidx.tv.material3.MaterialTheme(colorScheme=androidx.tv.material3.darkColorScheme(background=Color.Black,surface=Color(0xFF0D0D0F),primary=Color(0xFFE0D3BD),onSurface=Color(0xFFDADADA))){Box(Modifier.fillMaxSize().background(Color.Black)){TV()}}else Surface(Modifier.fillMaxSize()){Phone()}
+    if(BuildConfig.FLAVOR=="tv")androidx.tv.material3.MaterialTheme(colorScheme=androidx.tv.material3.darkColorScheme(background=Color.Black,surface=Color(0xFF0D0D0F),primary=Color(0xFFE0D3BD),onSurface=Color(0xFFDADADA))){CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides Color(0xFFE8E8E8),androidx.tv.material3.LocalContentColor provides Color(0xFFE8E8E8)){Box(Modifier.fillMaxSize().background(Color.Black)){TV()}}}else Surface(Modifier.fillMaxSize()){Phone()}
    }
   }
   if(BuildConfig.FLAVOR=="tv") {
@@ -387,7 +387,11 @@ class MainActivity:ComponentActivity() {
   }}
   AppLog.add("Session ended; local state cleared; remote deletion is best effort"); status="Session ended"; if(reset) pairing()
  }
- @Composable fun Action(label:String,modifier:Modifier=Modifier,onClick:()->Unit) { if(BuildConfig.FLAVOR=="tv") androidx.tv.material3.Button(onClick=onClick,modifier=modifier.heightIn(min=48.dp),contentPadding=PaddingValues(horizontal=16.dp,vertical=10.dp),colors=androidx.tv.material3.ButtonDefaults.colors(containerColor=Color.White.copy(alpha=.055f),contentColor=Color(0xFFDADADA),focusedContainerColor=Color(0xFFE0D3BD),focusedContentColor=Color.Black)){androidx.tv.material3.Text(label,style=androidx.tv.material3.MaterialTheme.typography.labelLarge,maxLines=1)} else Button(onClick=onClick,modifier=modifier){Text(label)} }
+ @Composable fun Action(label:String,modifier:Modifier=Modifier,compact:Boolean=false,onClick:()->Unit) {
+  if(BuildConfig.FLAVOR=="tv")androidx.tv.material3.Button(onClick=onClick,modifier=modifier.height(if(compact)36.dp else 40.dp),contentPadding=PaddingValues(horizontal=if(compact)10.dp else 12.dp,vertical=4.dp),colors=androidx.tv.material3.ButtonDefaults.colors(containerColor=Color.White.copy(alpha=.08f),contentColor=Color(0xFFE8E8E8),focusedContainerColor=Color(0xFFE0D3BD),focusedContentColor=Color(0xFF171717))){androidx.tv.material3.Text(label,style=androidx.tv.material3.MaterialTheme.typography.labelMedium,maxLines=1)}else Button(onClick=onClick,modifier=modifier){Text(label)}
+ }
+ @Composable fun ViewerAction(label:String,modifier:Modifier=Modifier,onClick:()->Unit)=Action(label,modifier,compact=true,onClick=onClick)
+
 
  @Composable fun ActivityLog(){
   var expanded by remember{mutableStateOf(false)}
@@ -621,7 +625,7 @@ class MainActivity:ComponentActivity() {
   if(fullQr && qr!=null)Dialog(onDismissRequest={fullQr=false},properties=DialogProperties(usePlatformDefaultWidth=false,decorFitsSystemWindows=false)){
    Box(Modifier.fillMaxSize().background(Color.White)){
     Image(qr!!.asImageBitmap(),"Full-screen pairing QR",Modifier.fillMaxSize().padding(24.dp),contentScale=ContentScale.Fit)
-    Box(Modifier.align(Alignment.TopEnd).padding(16.dp)){Action("Close QR"){fullQr=false}}
+    Box(Modifier.align(Alignment.TopEnd).padding(16.dp).background(Color(0xFF161616),androidx.compose.foundation.shape.RoundedCornerShape(12.dp)).padding(4.dp)){Action("Close QR"){fullQr=false}}
    }
   }
   if(showCode && qr!=null)Dialog(onDismissRequest={showCode=false},properties=DialogProperties(usePlatformDefaultWidth=false)){
@@ -635,7 +639,8 @@ class MainActivity:ComponentActivity() {
   }
   BackHandler(selected>=0){backFromViewer()}
   if(tvSettings)Dialog(onDismissRequest={tvSettings=false},properties=DialogProperties(usePlatformDefaultWidth=false)){
-   Box(Modifier.widthIn(max=720.dp).background(Color(0xFF0D0D0F),androidx.compose.foundation.shape.RoundedCornerShape(24.dp)).padding(32.dp)){
+   Surface(Modifier.widthIn(max=720.dp),color=Color(0xFF0D0D0F),contentColor=Color(0xFFE8E8E8),shape=androidx.compose.foundation.shape.RoundedCornerShape(20.dp)){
+    Box(Modifier.padding(24.dp)){
     Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(16.dp)){
      Text("Settings & diagnostics",style=MaterialTheme.typography.headlineMedium)
      Text("PhotosBeam ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
@@ -644,10 +649,12 @@ class MainActivity:ComponentActivity() {
      Action("Send detailed log to phone"){server?.sendLogToPhone();status="TV log queued for paired phone"}
      Action("Photo warmth: ${warmthLabel(photoWarmth)}"){cycleWarmth()}
      Text("Warmth uses a black-preserving photo filter. Video colors and HDR stay unchanged.")
+     Text("TV video buffer budget: ${videoReplayBudget(cacheDir)/1048576} MiB. Large Google files can require a complete pass to read end-of-file metadata.")
+     Action("TV storage settings"){try{startActivity(Intent(android.provider.Settings.ACTION_INTERNAL_STORAGE_SETTINGS))}catch(e:android.content.ActivityNotFoundException){status="Open Android TV Settings > Storage to free space."}}
      ActivityLog()
      Action("Close"){tvSettings=false}
     }
-   }
+   }}
   }
   Column(Modifier.fillMaxSize().padding(horizontal=40.dp,vertical=24.dp),verticalArrangement=Arrangement.spacedBy(16.dp)) {
    Text("PhotosBeam",style=MaterialTheme.typography.headlineMedium)
@@ -727,28 +734,31 @@ class MainActivity:ComponentActivity() {
      }else key(file.optString("baseUrl"),token,retryCount,photoQuality){
       PhotoViewer(file,token,loader,Modifier.fillMaxSize(),quality=photoQuality,viewport=viewport,warmth=photoWarmth,onAspect={mediaAspect=it;viewport=viewport.bounded(it,displayAspect)},onInfo={qualityInfo=it},onLoaded={loaded=true},onFailure={status=it})
      }
-     if(controlsVisible && actionsFocused)Row(Modifier.align(Alignment.TopCenter).padding(top=16.dp).widthIn(max=850.dp).background(Color.Black.copy(alpha=.65f),androidx.compose.foundation.shape.RoundedCornerShape(24.dp)).horizontalScroll(rememberScrollState()).padding(8.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)){
-      if(zoomMode){
-       Action("Zoom +",modifier=Modifier.focusRequester(firstControlFocus)){transform(ViewportChange(1.25f));runCatching{viewerFocus.requestFocus()}}
-       Action("Zoom −"){transform(ViewportChange(.8f));runCatching{viewerFocus.requestFocus()}}
-       Action("Fit"){resetView();actionsFocused=false}
-      }else{
-       Action("Zoom / pan",modifier=Modifier.focusRequester(firstControlFocus)){slideshow=false;zoomMode=true;actionsFocused=false;activity();runCatching{viewerFocus.requestFocus()}}
-       Action(if(slideshow)"Pause slides" else "Slideshow"){resetView();slideshow=!slideshow}
-      }
-      Action("More"){slideshow=false;qualityOpen=true}
-      Action("Grid"){selected=-1;slideshow=false}
+     if(controlsVisible && actionsFocused)Row(Modifier.align(Alignment.TopCenter).padding(top=10.dp).widthIn(max=1040.dp).background(Color.Black.copy(alpha=.72f),androidx.compose.foundation.shape.RoundedCornerShape(16.dp)).horizontalScroll(rememberScrollState()).padding(6.dp),horizontalArrangement=Arrangement.spacedBy(4.dp)){
+      ViewerAction("Previous",Modifier.focusRequester(firstControlFocus)){slideshow=false;selected=(selected-1+items.size)%items.size}
+      if(item.getString("type")=="VIDEO")ViewerAction(if(playerState in listOf("Paused","Ended","Idle","Source connection failed"))"Play" else "Pause"){slideshow=false;videoControl?.invoke("toggle")}
+      else ViewerAction(if(slideshow)"Pause slides" else "Slideshow"){resetView();slideshow=!slideshow}
+      ViewerAction("Next"){slideshow=false;advance()}
+      ViewerAction("Zoom −"){slideshow=false;zoomMode=true;viewport=viewport.change(ViewportChange(.8f),mediaAspect,displayAspect);activity()}
+      ViewerAction("Zoom +"){slideshow=false;zoomMode=true;viewport=viewport.change(ViewportChange(1.25f),mediaAspect,displayAspect);activity()}
+      ViewerAction("Fit"){resetView()}
+      if(item.getString("type")!="VIDEO")ViewerAction("Warmth"){cycleWarmth();activity()}
+      ViewerAction("Quality"){slideshow=false;qualityOpen=true}
+      ViewerAction("Retry"){retryCount++;qualityInfo="";videoOptions=emptyList();qualityOpen=false;load()}
+      ViewerAction("Send log"){server?.sendLogToPhone();activity()}
+      ViewerAction("Grid"){selected=-1;slideshow=false}
      }
      else if(controlsVisible)androidx.tv.material3.Text(if(zoomMode)"${"%.1f".format(viewport.scale)}×   •   D-pad pan   •   OK zoom   •   Back fit" else "${selected+1} / ${items.size}   •   ${"%.1f".format(viewport.scale)}×   •   Hold OK for actions",
       Modifier.align(Alignment.TopStart).padding(20.dp).background(Color.Black.copy(alpha=.55f),androidx.compose.foundation.shape.RoundedCornerShape(12.dp)).padding(horizontal=12.dp,vertical=8.dp),
       color=Color(0xFFDADADA),style=androidx.tv.material3.MaterialTheme.typography.labelMedium)
      if(qualityOpen)Dialog(onDismissRequest={qualityOpen=false}){Surface(Modifier.padding(24.dp),shape=MaterialTheme.shapes.large){Column(Modifier.widthIn(max=650.dp).padding(24.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
-      Text("Viewing options",style=MaterialTheme.typography.headlineMedium)
+      Text("Viewing options",style=MaterialTheme.typography.titleLarge)
       Text("Zoom ${"%.1f".format(viewport.scale)}× • Photo warmth ${warmthLabel(photoWarmth)}")
       Action("Photo warmth: ${warmthLabel(photoWarmth)}"){cycleWarmth()}
       Text("Warmth applies to photos only and keeps black pixels black. Zoom enlarges the current bounded photo decode; it does not fetch larger images.",style=MaterialTheme.typography.bodySmall)
       Action("Retry media"){retryCount++;loaded=false;qualityInfo="";videoOptions=emptyList();qualityOpen=false;load()}
       Action("Send TV log to phone"){server?.sendLogToPhone()}
+      Action("TV storage settings"){try{startActivity(Intent(android.provider.Settings.ACTION_INTERNAL_STORAGE_SETTINGS))}catch(e:android.content.ActivityNotFoundException){status="Open Android TV Settings > Storage to free space."}}
       Text("Source metadata: ${sourceDimensions(file)} • ${file.optString("mimeType")}")
       Text(qualityInfo.ifBlank{"Waiting for decoded media details…"})
       if(item.getString("type")=="VIDEO"){

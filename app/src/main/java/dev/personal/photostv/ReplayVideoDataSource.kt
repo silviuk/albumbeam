@@ -18,7 +18,16 @@ class ReplayVideoDataSource(private val replay:VideoReplayBuffer,private val ups
  override fun open(spec:DataSpec):Long{
   stopped=false;uri=spec.uri;position=spec.position;transferInitializing(spec)
   if(!replay.open(spec.uri.toString(),headers()+spec.httpRequestHeaders){stopped}){
-   return upstream.createDataSource().also{direct=it}.open(spec)
+   replay.directOpen(spec.position)
+   return upstream.createDataSource().also{source->
+    direct=source
+    source.addTransferListener(object:TransferListener{
+     override fun onTransferInitializing(source:DataSource,spec:DataSpec,isNetwork:Boolean){}
+     override fun onTransferStart(source:DataSource,spec:DataSpec,isNetwork:Boolean){}
+     override fun onBytesTransferred(source:DataSource,spec:DataSpec,isNetwork:Boolean,bytesTransferred:Int){replay.directRead(bytesTransferred)}
+     override fun onTransferEnd(source:DataSource,spec:DataSpec,isNetwork:Boolean){}
+    })
+   }.open(spec)
   }
   val length=replay.length
   if(length>=0 && position>length)throw IOException("Video position past end")
