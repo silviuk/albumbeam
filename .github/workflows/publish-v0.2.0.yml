@@ -46,16 +46,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release create v0.2.0 release-assets/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --target 98347c6224b3eeb28edece578765b3c985f6c4a4 \
-            --draft --title "AlbumBeam v0.2.0" \
-            --notes-file release-input/release-notes.txt
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/v0.2.0" > release-metadata.json
+          gh api "repos/$GITHUB_REPOSITORY/releases/437535569" > release-metadata.json
           python3 - <<'PY'
           import hashlib, json, pathlib
           metadata = json.loads(pathlib.Path("release-metadata.json").read_text())
-          assert metadata["draft"] is True
+          assert metadata["tag_name"] == "v0.2.0"
+          assert metadata["target_commitish"] == "98347c6224b3eeb28edece578765b3c985f6c4a4"
           expected = {p.name:p for p in pathlib.Path("release-assets").iterdir()}
           actual = {a["name"]:a for a in metadata["assets"]}
           assert set(actual) == set(expected), "Incomplete release assets"
@@ -66,7 +62,7 @@ jobs:
               assert asset["digest"] == "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
           print("All four release assets match local signed files")
           PY
-          gh release edit v0.2.0 --repo "$GITHUB_REPOSITORY" --draft=false
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/437535569" -F draft=false --silent
           test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v0.2.0" --jq .object.sha)" = "98347c6224b3eeb28edece578765b3c985f6c4a4"
       - name: Remove temporary transfer branch
         env:
