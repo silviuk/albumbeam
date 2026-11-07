@@ -17,7 +17,23 @@ Changes:
 - Explicit light text colors for both Material libraries, settings surfaces and QR.
 - TV storage settings reachable from settings and viewing options.
 
-Validation pending: compilation, byte/ownership/retry regressions, existing full
-suites, lint, signed APK verification. Physical Chromecast measurements unavailable.
-Google's download latency and non-range tail-metadata delivery remain constraints;
-this release does not promise instant startup for the 604 MB cloud file.
+Validation completed:
+- Local Kotlin/Compose compilation and 71 non-network tests pass.
+- Real TLS regression verifies oversized-response body remains readable without
+  another initial request; a known-size footer request uses explicit bounds and
+  a simulated range-capable server returns exactly the expected metadata bytes.
+- Existing and new ownership/cancellation, cross-file range isolation, buffer and
+  network failure regressions pass in the full CI suites.
+- Both APK builds, full unit suites, phone/TV lint and instrumentation APK builds
+  pass: https://github.com/silviuk/albumbeam/actions/runs/42411003010
+- Signed APKs retain the original certificate, package IDs, version 0.2.7 (18),
+  dependency classes and existing resource IDs, and pass 16 KiB alignment checks.
+- Specified solid settings text/background contrast is 15.85:1; focused buttons
+  12.14:1. Dark backings were strengthened over potentially bright media.
+- APK production code matches the validated tree; later changes only add the real
+  TLS regression and validation documentation.
+
+Not run: physical Chromecast UI/focus review, device instrumentation tests or
+Google endpoint timing with the user's private video. Google ignoring ranges and
+end metadata still limit startup; bounded ranges may or may not be honored by it.
+No claim of instant startup for the 604 MB cloud file is made.
