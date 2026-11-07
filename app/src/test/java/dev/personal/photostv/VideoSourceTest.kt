@@ -96,4 +96,23 @@ class VideoSourceTest {
   }finally{replay.close();assertTrue(directory.listFiles().isNullOrEmpty());directory.deleteRecursively();source.stop()}
  }
 
+ @Test fun oversizedTlsResponseRemainsReadableAndFooterSeekUsesBoundedRange()=runBlocking{
+  val count=java.util.concurrent.atomic.AtomicInteger();val data=ByteArray(128){it.toByte()}
+  val source=server{s->
+   count.incrementAndGet()
+   if(s.headers["range"]=="bytes=100-127")NanoHTTPD.newFixedLengthResponse(NanoHTTPD.Response.Status.PARTIAL_CONTENT,"video/mp4",java.io.ByteArrayInputStream(data.copyOfRange(100,128)),28L).apply{addHeader("Content-Range","bytes 100-127/128")}
+   else NanoHTTPD.newFixedLengthResponse(NanoHTTPD.Response.Status.OK,"video/mp4",java.io.ByteArrayInputStream(data),128L)
+  }
+  val directory=java.nio.file.Files.createTempDirectory("video-handoff-tls").toFile()
+  val handoff=VideoResponseHandoff(client());val replay=VideoReplayBuffer(directory,handoff,64){handoff.offer(it)}
+  val url="https://127.0.0.1:${source.listeningPort}/video"
+  try{
+   assertFalse(replay.open(url,emptyMap()))
+   handoff.newCall(okhttp3.Request.Builder().url(url).build()).execute().use{assertArrayEquals(data,it.body!!.bytes())}
+   assertEquals(1,count.get())
+   handoff.newCall(okhttp3.Request.Builder().url(url).header("Range","bytes=100-").build()).execute().use{assertEquals(206,it.code);assertArrayEquals(data.copyOfRange(100,128),it.body!!.bytes())}
+   assertEquals(2,count.get())
+  }finally{replay.close();handoff.close();directory.deleteRecursively();source.stop()}
+ }
+
 }
