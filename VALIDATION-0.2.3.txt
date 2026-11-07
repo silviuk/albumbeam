@@ -9,6 +9,18 @@ Changes:
 - Existing Google Cloud project and Android OAuth client remain valid with the
   original package/SHA-1 pair. Consent-screen branding can be changed separately.
 
-Validation in progress: source builds, existing tests, lint, SDK packaging and
-signer/resource/package checks. Physical launcher/themed-icon review on the user's
-phone/Chromecast remains a device check; this host has no attached Android device.
+Validation completed:
+- Both flavor-specific Kotlin/Compose compilations and signed SDK packaging pass.
+- 52 non-network tests pass locally; all 75 unit tests per flavor, phone/TV lint,
+  both app builds and both instrumentation APK builds pass in GitHub Actions:
+  https://github.com/silviuk/albumbeam/actions/runs/42376862783
+- Published-update APKs retain the original signing certificate and package IDs,
+  report PhotosBeam 0.2.3 (14), and pass 16 KiB alignment checks.
+- All previous resource IDs/styleable arrays and dependency classes are preserved;
+  the new adaptive/monochrome layers and manifest icon references are in the APKs.
+- Vector icon and banner previews were inspected locally. No bitmap decoding or
+  ongoing animation is introduced by the launcher assets.
+- Tracked source excludes signing keys, credentials and local SDK configuration.
+
+Not run: physical launcher/themed-icon review, installation/reboot pairing checks
+or instrumentation/device tests. This host has no attached Android device.
