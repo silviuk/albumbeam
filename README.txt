@@ -350,7 +350,7 @@ request is cancelled and any late response body is closed. A winning HTTP/1.1
 route is remembered for the current video, including later range requests.
 Phone streaming is unchanged. This adds no transcoding or whole-file download.
 
-Hold OK > Quality & info > Viewing options shows Video resolution, Video codec,
+Hold OK > More opens Viewing options with Video resolution, Video codec,
 Exact supplied tracks and Automatic (best supported quality). Options come from
 supported tracks reported by Media3; manual selection stays selected, and Auto
 restores hardware-first ranking by resolution, frame rate and codec. Track rows

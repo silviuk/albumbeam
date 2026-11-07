@@ -15,6 +15,21 @@ Changes:
 - Resolution, codec, exact supported tracks and Auto controls in Viewing options.
 - Per-open media byte/offset/throughput timing and explicit ignored-range logging.
 
-Validation in progress: existing tests, deterministic cancellation/header-race
-regressions, a real TLS stalled-header regression, builds, lint and signed APKs.
-No physical device or live private Google media is available on this host.
+Validation completed:
+- Local Kotlin/Compose compilation and 58 non-network tests pass.
+- Six deterministic header-race regressions cover quick primary, slow primary,
+  sticky compatibility route, immediate failure, late-body closure, cancellation
+  and independent cloning. Range headers are preserved.
+- A real TLS regression with a deliberately blocked first response returns via
+  a second connection before the primary's 3-second read timeout.
+- GitHub Actions: both app builds, full unit tests (including real TLS tests),
+  phone/TV lint and both instrumentation APK compilations pass:
+  https://github.com/silviuk/albumbeam/actions/runs/42402763810
+- Fresh SDK-packaged APKs pass original-certificate/package/version checks,
+  unchanged dependency classes, preserved existing resource IDs and 16 KiB alignment.
+- Version 0.2.4 (15); APK labels PhotosBeam. No new dependencies or permissions.
+
+Not verified on this host: live private Google media delivery, Chromecast startup
+latency, physical remote selection of multiple real renditions, or device tests.
+The fallback does not promise a bound on server latency or repair ignored ranges.
+A new device log is still needed to verify the user's specific network/media case.
