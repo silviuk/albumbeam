@@ -17,7 +17,21 @@ Delivery scope:
 Local validation:
 - Kotlin/Compose compilation and 76 non-network regression tests pass.
 - URL boundary, namespace, deep link query preservation and streaming seek guard
-  regressions included. APK and CI verification recorded after final builds.
+  regressions included.
+- Both APKs pass signature, package/version (0.2.8 / 19), unchanged dependency
+  class-set and resource-ID checks; original certificate retained. Browser VIEW
+  deep-link intent filter is present in the phone APK. 16 KiB alignment passes.
+- Four helper core tests plus desktop and touch Chromium fixture tests pass.
+  Fixtures cover native checked-state confirmation, forward/back ranges, Shift,
+  clearing, newly loaded items, stop, unloaded anchors, absent/blob video sources
+  and avoiding unrelated destructive controls. A discovered command-confirmation
+  race was fixed by disabling other bulk controls until confirmation completes.
+- Full Android builds, unit suites, phone/TV lint and instrumentation APK
+  compilation pass, including a real HTTP regression rejecting a huge ignored
+  tail-range response before reading its body and accepting a true HTTP 206.
+  CI: https://github.com/silviuk/albumbeam/actions/runs/42413768035
+- Instrumentation APKs were compiled, not run on hardware. APK production code
+  matches the tested Android tree; later edits affect helper/docs only.
 
 Hardware/service limitations:
 No physical TV/phone, signed-in Google DOM or private Google video is available in
