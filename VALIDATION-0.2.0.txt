@@ -13,12 +13,19 @@ Completed locally (offline, using the cached Android/Kotlin dependencies):
   entry points are present.
 - git diff --check passes.
 
+Completed in GitHub Actions:
+- Both app variants assemble successfully.
+- All 55 JVM tests pass per flavor, including real TLS/HTTP pairing, server
+  restart/revocation and streaming-network tests.
+- Both phone and TV lint checks pass (warnings remain).
+- Both instrumentation APKs compile and package; device tests were not run.
+- Successful run for source commit 5f6d0b510c4711616404b05db646d47f8805d970:
+  https://github.com/silviuk/albumbeam/actions/runs/42365166409
+
 Blocked locally:
 - Gradle cannot initialize FileLockContentionHandler because the current sandbox
   prevents finding/opening its required local network socket.
 - Real loopback TLS/HTTP JVM tests cannot run under that same socket restriction.
-- Full Gradle build/lint/APK packaging is delegated to Android checks on GitHub;
-  this record does not claim that remote job passed.
 - Shell access to GitHub is unavailable; repository API tools can be used instead.
 
 Not run on physical hardware:
@@ -29,6 +36,8 @@ Not run on physical hardware:
 
 Release status:
 - Source version is 0.2.0, versionCode 11.
-- No new APKs have been signed, installed or published in this environment.
+- CI produced APKs with an ephemeral test signing key. These have not been
+  installed or published as an update release. No APK has been signed with the
+  existing personal-test certificate in this session; local packaging is blocked.
 - Preserve the existing private personal-test signing key before building APKs
   for updates. No signing material is placed in source or the CI workflow.
