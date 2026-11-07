@@ -30,7 +30,19 @@ Local checks:
 - New real TLS tests exercise redirect isolation, auth handling, unsafe redirects,
   direct-response behavior and cancellation; they require CI's loopback networking.
 
+Completed in GitHub Actions:
+- Both app builds, all 66 JVM tests per flavor, phone/TV lint and both
+  instrumentation APK builds pass. Device tests were not run.
+- Run: https://github.com/silviuk/albumbeam/actions/runs/42370482394
+
+Signed APK packaging:
+- Fresh flavor-specific source compilation and Android SDK AAPT2/D8 packaging
+  succeeded using the unchanged dependency/resource inputs from the prior build.
+- Resource IDs/styleables match; package names and versionCode 12 are verified.
+- Both APKs pass signature and 16 KiB alignment checks and use the original
+  personal-test certificate; Google Cloud signing/package configuration is unchanged.
+
 Pending:
-- Full Gradle build, all 66 tests per flavor and lint in GitHub Actions.
 - Physical Chromecast remote navigation, codec selection and Google video startup.
-- Signed APK packaging and GitHub release publication after checks pass.
+- Physical playback validation remains necessary; passing unit/network fixtures
+  does not establish that Google delivery now succeeds on the reported Chromecast.
