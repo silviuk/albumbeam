@@ -47,3 +47,17 @@ class IdleControls(private val now:()->Long={System.nanoTime()/1_000_000}){
  @Synchronized fun touch():Long{lastInput=now();return ++generation}
  @Synchronized fun shouldHide(expected:Long,panelOpen:Boolean=false)=!panelOpen && expected==generation && now()-lastInput>=timeoutMillis
 }
+
+enum class ViewerDirection{PREVIOUS,NEXT,SEEK_BACK,SEEK_FORWARD}
+/** Android DPAD key codes; directional actions are distinct from menu focus navigation. */
+fun viewerDirection(keyCode:Int,video:Boolean):ViewerDirection?=when(keyCode){
+ 19->ViewerDirection.PREVIOUS
+ 20->ViewerDirection.NEXT
+ 21->if(video)ViewerDirection.SEEK_BACK else ViewerDirection.PREVIOUS
+ 22->if(video)ViewerDirection.SEEK_FORWARD else ViewerDirection.NEXT
+ else->null
+}
+fun seekPosition(position:Long,duration:Long,delta:Long):Long {
+ val target=if(delta>0 && position>Long.MAX_VALUE-delta)Long.MAX_VALUE else position+delta
+ return target.coerceAtLeast(0).coerceAtMost(if(duration>0)duration else Long.MAX_VALUE)
+}

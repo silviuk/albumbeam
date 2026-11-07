@@ -208,6 +208,7 @@ class MainActivity:ComponentActivity() {
      window.attributes=window.attributes.apply{preferredDisplayModeId=mode.modeId}
      AppLog.add("TV: preferred display ${mode.physicalWidth}x${mode.physicalHeight} at ${mode.refreshRate} Hz (system may retain another mode)")
     }
+   task{val capabilities=withContext(Dispatchers.Default){decoderCapabilities()};AppLog.add(capabilities)}
    pairing()
    networkWatch=lifecycleScope.launch { var previous=localAddress(); while(isActive){delay(3000);val next=localAddress();if(next!=previous){previous=next;end();status="Network changed. Paired phone will rediscover this TV."}} }
   }else{restorePairing();receiveSharedMedia(intent)}
@@ -501,6 +502,9 @@ class MainActivity:ComponentActivity() {
  @Composable fun TV() {
   var tvSettings by remember{mutableStateOf(false)}
   var qualityOpen by remember{mutableStateOf(false)}
+  var http1Only by remember{mutableStateOf(false)}
+  var actionsFocused by remember{mutableStateOf(false)}
+  var centerHeld by remember{mutableStateOf(false)}
   var fastStartup by remember{mutableStateOf(true)}
   var photoQuality by remember{mutableStateOf(PhotoQuality.SCREEN)}
   var fullQr by remember{mutableStateOf(false)}
@@ -513,16 +517,16 @@ class MainActivity:ComponentActivity() {
   var playerState by remember(selected){mutableStateOf("")}
   val viewerFocus=remember{FocusRequester()};val firstControlFocus=remember{FocusRequester()}
   fun activity(focus:Boolean=false){val hidden=!controlsVisible;controlsVisible=true;controlActivity=idleControls.touch();if(hidden && focus)restoreControlFocus=true}
-  LaunchedEffect(selected<0){if(selected>=0)activity()else qualityOpen=false}
+  fun openActions(){actionsFocused=true;activity();restoreControlFocus=true}
+  LaunchedEffect(selected){actionsFocused=false;centerHeld=false;if(selected>=0){activity();withFrameNanos{};runCatching{viewerFocus.requestFocus()}}else qualityOpen=false}
   LaunchedEffect(selected,controlActivity,qualityOpen){
-   if(selected>=0 && !qualityOpen){val expected=controlActivity;delay(idleControls.timeoutMillis);if(idleControls.shouldHide(expected,qualityOpen)){controlsVisible=false;if(items.getOrNull(selected)?.optString("type")!="VIDEO")runCatching{viewerFocus.requestFocus()}}}
+   if(selected>=0 && !qualityOpen){val expected=controlActivity;delay(idleControls.timeoutMillis);if(idleControls.shouldHide(expected,qualityOpen)){controlsVisible=false;actionsFocused=false;runCatching{viewerFocus.requestFocus()}}}
   }
   LaunchedEffect(controlsVisible,restoreControlFocus){if(controlsVisible && restoreControlFocus){withFrameNanos{};runCatching{firstControlFocus.requestFocus()};restoreControlFocus=false}}
   var qualityInfo by remember(selected){mutableStateOf("")}
   var videoOptions by remember(selected){mutableStateOf<List<VideoQualityOption>>(emptyList())}
   val context=LocalContext.current
   val loader=remember(epoch,items) { ImageLoader.Builder(context).apply{items.firstOrNull()?.optJSONObject("mediaFile")?.takeIf{nativeFile(it)}?.let{okHttpClient(mediaClient(it))}}.memoryCache { coil.memory.MemoryCache.Builder(context).maxSizePercent(0.18).build() }.diskCachePolicy(CachePolicy.DISABLED).build() }
-  DisposableEffect(loader){onDispose{loader.shutdown()}}
   DisposableEffect(loader){onDispose{loader.shutdown()}}
   LaunchedEffect(items.isEmpty()){if(items.isEmpty()){selected=-1;slideshow=false}}
   fun advance(){ if(items.isNotEmpty()) selected=(selected+1)%items.size }
@@ -578,6 +582,7 @@ class MainActivity:ComponentActivity() {
   Column(Modifier.fillMaxSize().padding(horizontal=40.dp,vertical=24.dp),verticalArrangement=Arrangement.spacedBy(16.dp)) {
    Text("AlbumBeam",style=MaterialTheme.typography.headlineLarge)
    Text(status,style=MaterialTheme.typography.bodyLarge)
+   Text("Fullscreen: ↑/↓ previous/next • Video ←/→ seek • OK play/pause • Hold OK for actions",style=MaterialTheme.typography.bodySmall)
    Row(horizontalArrangement=Arrangement.spacedBy(16.dp)) {
     Action("End viewing"){end()}
     Action("Retry"){retryCount++;if(session.isBlank()) pairing() else load()}
@@ -606,22 +611,42 @@ class MainActivity:ComponentActivity() {
    }
   }
   items.getOrNull(selected)?.let { item ->
-   Dialog(onDismissRequest={selected=-1;slideshow=false},properties=DialogProperties(usePlatformDefaultWidth=false,decorFitsSystemWindows=false)){
+   Dialog(onDismissRequest={if(actionsFocused){actionsFocused=false;controlsVisible=false;runCatching{viewerFocus.requestFocus()}}else{selected=-1;slideshow=false}},properties=DialogProperties(usePlatformDefaultWidth=false,decorFitsSystemWindows=false)){
     Box(Modifier.fillMaxSize().background(Color.Black)
      .onPreviewKeyEvent{event->
       val key=event.nativeKeyEvent
-      if(key.action==android.view.KeyEvent.ACTION_DOWN && key.keyCode!=android.view.KeyEvent.KEYCODE_BACK){
-       val hidden=!controlsVisible
-       val navigation=key.keyCode in listOf(19,20,21,22,23,66)
-       activity(hidden && navigation)
-       hidden && navigation
-      }else false
+      val down=key.action==android.view.KeyEvent.ACTION_DOWN
+      val isVideo=item.optString("type")=="VIDEO"
+      if(qualityOpen)false
+      else if(actionsFocused && centerHeld && key.keyCode in listOf(android.view.KeyEvent.KEYCODE_DPAD_CENTER,android.view.KeyEvent.KEYCODE_ENTER)){if(key.action==android.view.KeyEvent.ACTION_UP)centerHeld=false;true}
+      else if(actionsFocused){if(down && key.keyCode!=android.view.KeyEvent.KEYCODE_BACK)activity();false}
+      else when{
+       down && viewerDirection(key.keyCode,isVideo)!=null->{
+        activity();slideshow=false
+        when(viewerDirection(key.keyCode,isVideo)){
+         ViewerDirection.PREVIOUS->if(key.repeatCount==0)selected=(selected-1+items.size)%items.size
+         ViewerDirection.NEXT->if(key.repeatCount==0)advance()
+         ViewerDirection.SEEK_BACK->if(key.repeatCount%4==0)videoControl?.invoke("seek-back")
+         ViewerDirection.SEEK_FORWARD->if(key.repeatCount%4==0)videoControl?.invoke("seek-forward")
+         else->Unit
+        }
+        true
+       }
+       key.keyCode in listOf(android.view.KeyEvent.KEYCODE_DPAD_CENTER,android.view.KeyEvent.KEYCODE_ENTER)->{
+        if(down){if(key.repeatCount==0)centerHeld=false;if(key.isLongPress || key.repeatCount>0){centerHeld=true;openActions()}}
+        else if(key.action==android.view.KeyEvent.ACTION_UP && !centerHeld){activity();if(isVideo)videoControl?.invoke("toggle")else{openActions()}}
+        true
+       }
+       down && key.keyCode==android.view.KeyEvent.KEYCODE_MENU->{openActions();true}
+       down && key.keyCode==android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE->{slideshow=false;activity();videoControl?.invoke("toggle");true}
+       else->false
+      }
      }
      .pointerInput(Unit){awaitPointerEventScope{while(true){val event=awaitPointerEvent(PointerEventPass.Initial);if(event.type==PointerEventType.Press || event.changes.any{it.pressed})activity()}}}
      .focusRequester(viewerFocus).focusable()){
      val file=item.getJSONObject("mediaFile")
-     if(item.getString("type")=="VIDEO")key(file.optString("baseUrl"),token,retryCount,fastStartup){
-      VideoViewer(file,token,Modifier.fillMaxSize(),fastStartup=fastStartup,controlsVisible=controlsVisible,onActivity={focus->activity(focus)},onControlReady={videoControl=it},onState={playerState=it},onInfo={qualityInfo=it},onOptions={videoOptions=it},onEnded={if(slideshow)advance()},onInteraction={slideshow=false},onFailure={message->status=message})
+     if(item.getString("type")=="VIDEO")key(file.optString("baseUrl"),token,retryCount,fastStartup,http1Only){
+      VideoViewer(file,token,Modifier.fillMaxSize(),fastStartup=fastStartup,http1Only=http1Only,controlsVisible=controlsVisible,onActivity={focus->activity(focus)},onControlReady={videoControl=it},onState={playerState=it},onInfo={qualityInfo=it},onOptions={videoOptions=it},onEnded={if(slideshow)advance()},onInteraction={slideshow=false},onFailure={message->status=message})
      }else key(file.optString("baseUrl"),token,retryCount,photoQuality){
       PhotoViewer(file,token,loader,Modifier.fillMaxSize(),quality=photoQuality,onInfo={qualityInfo=it},onLoaded={loaded=true},onFailure={status=it})
      }
@@ -639,6 +664,10 @@ class MainActivity:ComponentActivity() {
       Text("Source metadata: ${sourceDimensions(file)} • ${file.optString("mimeType")}")
       Text(qualityInfo.ifBlank{"Waiting for decoded media details…"})
       if(item.getString("type")=="VIDEO"){
+       if(!nativeFile(file)){
+        Text("Google connection: ${if(http1Only)"HTTP/1.1 compatibility" else "automatic HTTP/2 or HTTP/1.1"}. Download redirects use a separate connection from the authorization host.")
+        Action(if(http1Only)"Retry automatic Google connection" else "Retry Google using HTTP/1.1"){http1Only=!http1Only;retryCount++;qualityInfo="";qualityOpen=false;actionsFocused=false}
+       }
        Text("Fast startup: ${if(fastStartup) "On" else "Off"}. Skipping an optional seek index can limit seeking on some videos.")
        Action(if(fastStartup) "Restart with seek index" else "Restart with fast startup"){fastStartup=!fastStartup;qualityInfo="";videoOptions=emptyList();qualityOpen=false}
        Text(if(nativeFile(file))"The phone streams the provider-supplied file without AlbumBeam transcoding. Cloud providers may supply a converted file. The decoded track below shows actual playback quality." else "Google supplies a transcoded video. Original-file video download and a server resolution selector are unavailable. Source metadata does not prove delivered playback quality.")

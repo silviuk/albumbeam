@@ -1,0 +1,36 @@
+AlbumBeam 0.2.1 validation
+
+Problem evidence from a Chromecast with Google TV 4K, Android 14:
+- Google returns a 302 from lh3.googleusercontent.com in under one second.
+- Requests to video-downloads.googleusercontent.com then time out before headers.
+- No decoder or video track is initialized during those failures.
+- No new connection/TLS event appears for the redirected origin, consistent with
+  HTTP/2 connection coalescing. This is a hypothesis, not a proven Google defect.
+- Photos decode and use a Surface buffer at 3840x2160 in the supplied device log.
+
+Changes:
+- Resolve the authorization redirect separately, then open the signed video URL
+  using the player's separate connection pool. Never log signed URLs or tokens.
+- Probe only response headers with a one-byte range; no full download or transcode.
+- Strip OAuth authorization across origins, retain it only for same-origin URLs,
+  reject HTTPS downgrades and credentials embedded in redirect destinations.
+- Cancel pending source lookup when leaving playback; preserve pause during lookup.
+- Expose HTTP/1.1 compatibility retry through Quality & info; retain TLS.
+- Fullscreen Up/Down changes items; video Left/Right seeks 10 seconds; OK toggles
+  play/pause. Hold OK opens the action bar; Back leaves it. Actions retain normal
+  focus navigation. Position/duration and key hints appear for three seconds.
+- Query decoder capabilities on the actual device, prefer hardware acceleration,
+  and rank supplied tracks by hardware support, resolution/fps and codec efficiency.
+  An app cannot ask Google to re-encode a single supplied rendition to another codec.
+
+Local checks:
+- Kotlin/Compose main/phone sources compile with cached stable dependencies.
+- All JVM test sources compile; 44 non-network tests pass.
+- Android instrumentation sources compile; no device tests have run here.
+- New real TLS tests exercise redirect isolation, auth handling, unsafe redirects,
+  direct-response behavior and cancellation; they require CI's loopback networking.
+
+Pending:
+- Full Gradle build, all 66 tests per flavor and lint in GitHub Actions.
+- Physical Chromecast remote navigation, codec selection and Google video startup.
+- Signed APK packaging and GitHub release publication after checks pass.

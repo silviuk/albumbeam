@@ -65,6 +65,23 @@ Development verification
 See VALIDATION-0.2.0.txt for checks completed and checks blocked in this environment.
 Do not treat the source version as a published, device-validated release.
 
+
+0.2.1 playback and remote update
+Google video authorization and the download origin now use separate connection
+pools. The signed URL stays in memory; OAuth is removed on cross-origin redirects.
+This addresses a possible HTTP/2 connection-reuse problem seen in device logs.
+If the download host still stalls, hold OK, open Quality & info and try the
+HTTP/1.1 connection option, or select the file from the phone.
+Fullscreen controls: Up/Down = previous/next; video Left/Right = seek 10 seconds;
+OK = play/pause; hold OK = actions. Back closes actions, then returns to the grid.
+On photos, Left/Right also changes items and OK opens actions. Controls hide after
+three seconds. Menus retain normal directional focus navigation.
+The app queries actual decoder capabilities and prefers supported hardware
+formats. When multiple tracks exist, it then chooses resolution/fps and codec
+preference. A single Google-supplied video cannot be changed into another codec
+without an alternate source or transcoding. The app performs no transcoding.
+See VALIDATION-0.2.1.txt for verification and outstanding physical-device checks.
+
 Build prerequisites
 Install Android Studio, JDK 17, Android SDK Platform 37.0 and build tools. Set
 local.properties sdk.dir to your SDK directory. Run ./gradlew assembleDebug test.
