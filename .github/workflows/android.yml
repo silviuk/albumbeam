@@ -2,6 +2,7 @@ name: Android checks
 on:
   push:
     branches: [main]
+    paths-ignore: ['.github/workflows/publish-*.yml']
   workflow_dispatch:
 permissions:
   contents: read

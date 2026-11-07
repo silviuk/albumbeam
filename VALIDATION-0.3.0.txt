@@ -13,7 +13,29 @@ Implemented:
   selected collection and slideshows. Camera photos use full-size-file TV decode.
 - Original video tracks retained without conversion; no 2,000-item timeline cap.
 
-Validation in progress: Kotlin/Compose compile, unit regressions, Android builds/
-lint and Android emulator MediaStore/native HTTP instrumentation. Hardware remote
-focus, Android permission dialogs on a Samsung phone, 4K/HDR playback and large
-real camera libraries require physical device verification.
+Validation completed:
+- Kotlin/Compose compilation and 84 local non-network regression tests pass,
+  including timestamp fallback, time zones, folder boundaries, paging beyond
+  2,000, overflow bounds, grid indices, preview bounds, origin validation and
+  bounded response reads compatible with Android 8.
+- Full Android unit suites, both APK builds, phone/TV lint and instrumentation
+  APK compilation pass. Existing browser helper fixture checks pass.
+- Android 15 / API 35 emulator instrumentation passes both camera tests:
+  real MediaStore insertion/query, newest-first ordering and excluding non-camera
+  files; bounded thumbnails; original JPEG byte equality; full/range reads;
+  pinned HTTPS; unauthorized catalog rejection; and a 2,105-item paged timeline.
+  CI: https://github.com/silviuk/albumbeam/actions/runs/42416859496
+- APKs retain the original signing certificate and package IDs, use version 0.3.0
+  / code 20, preserve dependency classes and resource IDs and pass 16 KiB alignment.
+- Media read permissions are present only in the phone APK. Legacy storage access
+  has maxSdkVersion 32; modern image/video/selected-media permissions are declared.
+- Original source video data is not re-encoded. Photos are decoded to a bounded
+  TV resolution; thumbnail generation is isolated from original-file delivery.
+- Later changes update validation/setup text and avoid redundant CI runs when
+  only release-publishing workflows change; application code is unchanged.
+
+Not run on hardware: Samsung permission-dialog UX, partial-library grants on a
+real phone, Chromecast D-pad focus, physical 4K/HDR/video playback, screen-off
+sharing reliability and large real camera libraries. The emulator validates
+MediaStore/server behavior, not hardware codec/display performance. Sharing is a
+snapshot; refresh is explicit, and filters/day selection apply to loaded items.

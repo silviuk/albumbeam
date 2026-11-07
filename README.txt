@@ -118,7 +118,7 @@ selection behavior is not guaranteed. Google's session limit is 2,000 items.
 Android's picker also owns its controls and its device-dependent selection limit.
 For local media, use your gallery's Select all or date groups when offered, then
 Share > PhotosBeam. Alternatively download originals into a local folder and use
-Choose files on phone. PhotosBeam accepts at most 2,000 files per session.
+Choose files on phone. Manual file/picker selections accept at most 2,000 files per session; the paged camera timeline is not subject to that cap.
 
 Development verification
 See VALIDATION-0.2.0.txt for checks completed and checks blocked in this environment.
