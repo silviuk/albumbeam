@@ -657,6 +657,7 @@ class MainActivity:ComponentActivity() {
   val gridTiles=remember(items,cameraCatalog!=null){timelineTiles(items,cameraCatalog!=null)}
   val gridState=rememberLazyGridState()
   val nearEnd by remember{derivedStateOf{gridState.layoutInfo.totalItemsCount>0 && (gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0)>=gridState.layoutInfo.totalItemsCount-8}}
+  LaunchedEffect(epoch,session,mediaFilter,selectionOnly){gridState.scrollToItem(0)}
   var viewport by remember{mutableStateOf(MediaViewport())}
   var zoomMode by remember{mutableStateOf(false)}
   var mediaAspect by remember{mutableFloatStateOf(0f)}
@@ -702,7 +703,7 @@ class MainActivity:ComponentActivity() {
   var qualityInfo by remember(selected){mutableStateOf("")}
   var videoOptions by remember(selected){mutableStateOf<List<VideoQualityOption>>(emptyList())}
   val context=LocalContext.current
-  val loader=remember(epoch,items) { ImageLoader.Builder(context).apply{items.firstOrNull()?.optJSONObject("mediaFile")?.takeIf{nativeFile(it)}?.let{okHttpClient(mediaClient(it))}}.memoryCache { coil.memory.MemoryCache.Builder(context).maxSizePercent(0.18).build() }.diskCachePolicy(CachePolicy.DISABLED).build() }
+  val loader=remember(epoch,session) { ImageLoader.Builder(context).apply{allItems.firstOrNull()?.optJSONObject("mediaFile")?.takeIf{nativeFile(it)}?.let{okHttpClient(mediaClient(it))}}.memoryCache { coil.memory.MemoryCache.Builder(context).maxSizePercent(0.18).build() }.diskCachePolicy(CachePolicy.DISABLED).build() }
   DisposableEffect(loader){onDispose{loader.shutdown()}}
   LaunchedEffect(items.isEmpty()){if(items.isEmpty()){selected=-1;slideshow=false}}
   fun advance(){ if(items.isNotEmpty()) selected=(selected+1)%items.size }
@@ -828,7 +829,7 @@ class MainActivity:ComponentActivity() {
      val position=gridTiles.indexOfFirst{it.day==day}.coerceAtLeast(0)
      dateMenu=false;lifecycleScope.launch{gridState.scrollToItem(position)}
     }
-    Action("Select loaded day (${group.size})"){chosen=chosen+group.map{it.getString("id")};choosing=true;selectionOnly=false;dateMenu=false}
+    Action("Select ${timelineLabel(day)} (${group.size} loaded)"){chosen=chosen+group.map{it.getString("id")};choosing=true;selectionOnly=false;dateMenu=false}
    }
    Action("Close"){dateMenu=false}
   }}}
