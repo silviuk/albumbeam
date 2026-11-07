@@ -1,0 +1,79 @@
+name: Publish AlbumBeam v0.2.0
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/publish-v0.2.0.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: 1bc9b19b964f8ec5e750aef51be05c3e09be27c8
+          path: release-input
+          persist-credentials: false
+      - name: Reassemble and verify signed release files
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, pathlib
+          root = pathlib.Path("release-input")
+          manifest = json.loads((root / "release-manifest.json").read_text())
+          assert manifest["version"] == "0.2.0"
+          assert manifest["sourceCommit"] == "98347c6224b3eeb28edece578765b3c985f6c4a4"
+          output = pathlib.Path("release-assets")
+          output.mkdir()
+          for item in manifest["files"]:
+              assert pathlib.Path(item["name"]).name == item["name"]
+              parts = sorted((root / "chunks" / item["kind"]).glob("*.part"))
+              assert len(parts) == item["parts"], "Missing transfer data"
+              destination = output / item["name"]
+              with destination.open("wb") as handle:
+                  for part in parts:
+                      handle.write(part.read_bytes())
+              assert destination.stat().st_size == item["size"]
+              assert hashlib.sha256(destination.read_bytes()).hexdigest() == item["sha256"], "Checksum mismatch"
+              print("Verified", item["name"], item["sha256"])
+          checksums = "".join(f'{item["sha256"]}  {item["name"]}\n' for item in manifest["files"])
+          assert checksums == (root / "albumbeam-v0.2.0-SHA256SUMS.txt").read_text()
+          (output / "albumbeam-v0.2.0-SHA256SUMS.txt").write_text(checksums)
+          PY
+      - name: Upload and verify release before publishing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create v0.2.0 release-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target 98347c6224b3eeb28edece578765b3c985f6c4a4 \
+            --draft --title "AlbumBeam v0.2.0" \
+            --notes-file release-input/release-notes.txt
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/v0.2.0" > release-metadata.json
+          python3 - <<'PY'
+          import hashlib, json, pathlib
+          metadata = json.loads(pathlib.Path("release-metadata.json").read_text())
+          assert metadata["draft"] is True
+          expected = {p.name:p for p in pathlib.Path("release-assets").iterdir()}
+          actual = {a["name"]:a for a in metadata["assets"]}
+          assert set(actual) == set(expected), "Incomplete release assets"
+          for name, path in expected.items():
+              asset = actual[name]
+              assert asset["state"] == "uploaded"
+              assert asset["size"] == path.stat().st_size
+              assert asset["digest"] == "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+          print("All four release assets match local signed files")
+          PY
+          gh release edit v0.2.0 --repo "$GITHUB_REPOSITORY" --draft=false
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v0.2.0" --jq .object.sha)" = "98347c6224b3eeb28edece578765b3c985f6c4a4"
+      - name: Remove temporary transfer branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          current="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/release-staging/v0.2.0-20261107" --jq .object.sha)"
+          if [ "$current" = "1bc9b19b964f8ec5e750aef51be05c3e09be27c8" ]; then
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/release-staging/v0.2.0-20261107"
+          fi
