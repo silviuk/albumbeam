@@ -14,6 +14,7 @@ Completed locally (offline, using the cached Android/Kotlin dependencies):
 - git diff --check passes.
 
 Completed in GitHub Actions:
+- Repeated successfully in run 42367576876 (APKs also retained as CI artifacts).
 - Both app variants assemble successfully.
 - All 55 JVM tests pass per flavor, including real TLS/HTTP pairing, server
   restart/revocation and streaming-network tests.
@@ -25,7 +26,8 @@ Completed in GitHub Actions:
 Blocked locally:
 - Gradle cannot initialize FileLockContentionHandler because the current sandbox
   prevents finding/opening its required local network socket.
-- Real loopback TLS/HTTP JVM tests cannot run under that same socket restriction.
+- Real loopback TLS/HTTP JVM tests cannot run locally under that restriction;
+  those tests passed in CI.
 - Shell access to GitHub is unavailable; repository API tools can be used instead.
 
 Not run on physical hardware:
@@ -34,10 +36,19 @@ Not run on physical hardware:
 - Native HTTPS/HTTP streaming, range seeking and behavior with cloud providers.
 - Maximum 4K60/HDR decoding, output timing, throughput, focus and screenshots.
 
-Release status:
-- Source version is 0.2.0, versionCode 11.
-- CI produced APKs with an ephemeral test signing key. These have not been
-  installed or published as an update release. No APK has been signed with the
-  existing personal-test certificate in this session; local packaging is blocked.
-- Preserve the existing private personal-test signing key before building APKs
-  for updates. No signing material is placed in source or the CI workflow.
+APK delivery
+- Both v0.2.0 APKs (versionCode 11) were packaged locally with the Android SDK
+  tools after Gradle's local socket initialization remained unavailable.
+- Fresh application Kotlin/Compose and Java code was compiled for each flavor.
+  Dependency code/assets were reused from the existing v0.1.9 build; dependencies
+  have not changed. Resource linking verified identical resource IDs/styleables.
+- D8 compiled and merged the application and dependency code. AAPT verified each
+  package/version and the phone-only service/share manifest declarations.
+- Both APKs pass APK v2/v3 signature verification and 16 KiB zip alignment checks.
+- Both match the original personal-test signing certificate, SHA-256:
+  35:D2:02:D2:1C:C8:85:F1:C0:DF:25:76:9C:91:07:71:73:BB:AE:CF:F7:C2:90:F3:9D:13:23:B0:DC:91:33:1A
+- No signing key was uploaded to GitHub or included in source. CI artifacts use
+  an ephemeral CI certificate and must be re-signed before use as an update.
+- Install the delivered signed APKs over existing installs. Google Cloud OAuth
+  package/SHA-1 registration stays unchanged. Physical-device checks above remain
+  outstanding. APKs are supplied for personal testing, not Google Play publication.
