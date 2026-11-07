@@ -24,4 +24,13 @@ class VideoResponseHandoffTest{
   val handoff=VideoResponseHandoff(upstream);assertTrue(handoff.offer(response(tracked())));handoff.close();assertEquals(1,closed)
   val second=VideoResponseHandoff(upstream);assertTrue(second.offer(response(tracked())));second.newCall(Request.Builder().url(url).build()).cancel();assertEquals(2,closed);second.close()
  }
+ @Test fun knownSizeUsesExplicitEndForSameFileMetadataSeeks(){
+  val handoff=VideoResponseHandoff(upstream)
+  assertTrue(handoff.offer(response(ByteArray(128).toResponseBody())))
+  assertEquals("bytes=100-127",handoff.newCall(Request.Builder().url(url).header("Range","bytes=100-").build()).request().header("Range"))
+  assertEquals("bytes=100-",handoff.newCall(Request.Builder().url("https://other.invalid/video").header("Range","bytes=100-").build()).request().header("Range"))
+  assertEquals("bytes=100-110",handoff.newCall(Request.Builder().url(url).header("Range","bytes=100-110").build()).request().header("Range"))
+  handoff.close()
+ }
+
 }

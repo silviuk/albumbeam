@@ -431,3 +431,7 @@ SmartTube's source selects DASH/HLS/SABR and other YouTube formats when availabl
 Google Photos Picker documents a download rendition (=dv), with no corresponding
 DASH/HLS manifest option. Changing playback engines cannot create a missing stream.
 No source encoding, resolution or frame rate is changed by this update.
+
+Known-size direct seeks now send explicit start/end byte ranges for the same file,
+instead of open-ended ranges. This is standard HTTP range syntax; whether Google
+honors it must be verified on device. Cross-file requests keep their own ranges.

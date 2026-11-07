@@ -9,6 +9,7 @@ Evidence:
 
 Changes:
 - Pass the initial response to the player for oversize/206 bypass paths.
+- Use explicit end offsets for known-size direct seeks; same-file bounds only.
 - Propagate initial buffer failure instead of hidden extra network attempts.
 - Persistent error feedback and preparation/byte progress, including low disk.
 - Video sample buffering: target 48 MiB, 3–10s window, 750ms startup threshold.
