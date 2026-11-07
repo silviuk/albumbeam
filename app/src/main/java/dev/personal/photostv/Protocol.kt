@@ -35,7 +35,7 @@ class ManualGate(private val now:()->Long=System::currentTimeMillis){
 fun verification(pin:String)=pin.take(16).uppercase(java.util.Locale.ROOT).chunked(4).joinToString("-")
 
 enum class RemoteAction(val wire:String){
- PREVIOUS("previous"),NEXT("next"),PLAY("play"),PAUSE("pause"),STOP("stop"),START_SLIDESHOW("start-slideshow"),STOP_SLIDESHOW("stop-slideshow");
+ PREVIOUS("previous"),NEXT("next"),PLAY("play"),PAUSE("pause"),STOP("stop"),START_SLIDESHOW("start-slideshow"),STOP_SLIDESHOW("stop-slideshow"),ZOOM_IN("zoom-in"),ZOOM_OUT("zoom-out"),ZOOM_RESET("zoom-reset"),PAN_LEFT("pan-left"),PAN_RIGHT("pan-right"),PAN_UP("pan-up"),PAN_DOWN("pan-down"),PHOTO_WARMTH("photo-warmth");
  companion object{fun parse(value:String)=entries.firstOrNull{it.wire==value}}
 }
 

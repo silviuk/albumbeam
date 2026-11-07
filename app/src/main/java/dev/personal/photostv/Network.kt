@@ -17,7 +17,7 @@ fun api(token:String,path:String,method:String="GET",body:JSONObject?=null):JSON
  if(method!="GET") b.method(method,if(method=="POST") (body?.toString() ?: "{}").toRequestBody("application/json".toMediaType()) else null)
  googleHttp.newCall(b.build()).execute().use { r -> AppLog.add("Google response HTTP ${r.code}"); if(!r.isSuccessful) error("Google ${r.code}: "+when(r.code){401->"Reconnect phone";403->"Access denied; reconnect or select again";404->"Selection expired; select again";else->"Retry when online"}); return JSONObject(r.body?.string().orEmpty().ifBlank{"{}"}) }
 }
-class PairServer(private val diagnostic:(String)->Unit = {},private val control:(RemoteAction)->Unit = {},private val state:()->String = {""}, private val nativeSharing:()->Boolean={false}, private val selectionId:()->String={""}, val device:DeviceIdentity=DeviceIdentity.create(), private val initiallyPaired:Boolean=false, private val onPaired:()->Unit={}, val receive:(JSONObject)->Unit):NanoHTTPD(0) {
+class PairServer(private val diagnostic:(String)->Unit = {},private val control:(RemoteAction)->Unit = {},private val viewport:(ViewportChange)->Unit = {},private val state:()->String = {""}, private val nativeSharing:()->Boolean={false}, private val selectionId:()->String={""}, val device:DeviceIdentity=DeviceIdentity.create(), private val initiallyPaired:Boolean=false, private val onPaired:()->Unit={}, val receive:(JSONObject)->Unit):NanoHTTPD(0) {
  private val manualGate=ManualGate()
  val manualCode get()=manualGate.code
  private var paired=initiallyPaired
@@ -61,7 +61,7 @@ class PairServer(private val diagnostic:(String)->Unit = {},private val control:
  }
  fun link(host:String)=Link(host,listeningPort,pin,gate.code)
  @Synchronized override fun serve(s:IHTTPSession):Response = try {
-  if(s.uri!="/log-inbox")AppLog.add("TV request: "+when(s.uri){"/health"->"local TLS self-test";"/pair"->"pair";"/manual-pair"->"manual pair";"/control"->"remote control";"/logs"->"diagnostic report";"/session"->"session";else->"unknown route"})
+  if(s.uri!="/log-inbox")AppLog.add("TV request: "+when(s.uri){"/health"->"local TLS self-test";"/pair"->"pair";"/manual-pair"->"manual pair";"/control"->"remote control";"/viewport"->"zoom/pan";"/logs"->"diagnostic report";"/session"->"session";else->"unknown route"})
   require(s.method==Method.POST)
   require((s.headers["content-length"]?.toLongOrNull() ?: 0) in 1..2097152)
   val data=mutableMapOf<String,String>(); s.parseBody(data); val j=JSONObject(data["postData"] ?: "{}")
@@ -72,6 +72,12 @@ class PairServer(private val diagnostic:(String)->Unit = {},private val control:
    else {paired=true;onPaired();newFixedLengthResponse(JSONObject().put("auth",auth).toString())}
   }
   else if(s.headers["authorization"]!="Bearer $auth") newFixedLengthResponse(Response.Status.FORBIDDEN,"text/plain","Rejected")
+  else if(s.uri=="/viewport"){
+   val change=ViewportChange.parse(j)
+   val id=j.getString("requestId");require(id.isNotBlank() && id.length<=128)
+   if(commandIds.add(id)){viewport(change);if(commandIds.size>256)commandIds.remove(commandIds.first())}
+   newFixedLengthResponse(JSONObject().put("accepted",true).toString())
+  }
   else if(s.uri=="/control"){
    val action=requireNotNull(RemoteAction.parse(j.optString("action")))
    val id=j.getString("requestId");require(id.isNotBlank() && id.length<=128)

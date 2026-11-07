@@ -3,6 +3,8 @@ package dev.personal.photostv
 import android.content.Context
 import android.graphics.*
 import android.graphics.drawable.BitmapDrawable
+import android.widget.FrameLayout
+import android.view.ViewGroup
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import androidx.compose.foundation.background
@@ -66,6 +68,20 @@ fun mediaError(error:Throwable):String=generateSequence(error){it.cause}.take(8)
 
 private class PhotoSurface(context:Context,private val pixels:PhotoPixels):SurfaceView(context),SurfaceHolder.Callback{
  var bitmap:Bitmap?=null
+ private var viewport=MediaViewport()
+ private var warmth=0f
+ private val paint=Paint(Paint.FILTER_BITMAP_FLAG)
+ private val destination=RectF()
+ fun updateView(next:MediaViewport,tint:Float){
+  if(viewport==next && warmth==tint)return
+  viewport=next
+  if(warmth!=tint){
+   warmth=tint
+   val c=warmthChannels(tint)
+   paint.colorFilter=if(tint<=0f)null else ColorMatrixColorFilter(ColorMatrix(floatArrayOf(c[0],0f,0f,0f,0f, 0f,c[1],0f,0f,0f, 0f,0f,c[2],0f,0f, 0f,0f,0f,1f,0f)))
+  }
+  drawPhoto()
+ }
  init{holder.addCallback(this);holder.setFixedSize(pixels.width,pixels.height)}
  override fun surfaceCreated(holder:SurfaceHolder){drawPhoto()}
  override fun surfaceChanged(holder:SurfaceHolder,format:Int,width:Int,height:Int){AppLog.add("Photo surface buffer ${width}x${height}; view ${this.width}x${this.height}");drawPhoto()}
@@ -77,16 +93,16 @@ private class PhotoSurface(context:Context,private val pixels:PhotoPixels):Surfa
    try{
     canvas.drawColor(android.graphics.Color.BLACK)
     bitmap?.let{image->
-     val factor=minOf(canvas.width.toFloat()/image.width,canvas.height.toFloat()/image.height)
-     val w=image.width*factor;val h=image.height*factor
-     canvas.drawBitmap(image,null,RectF((canvas.width-w)/2,(canvas.height-h)/2,(canvas.width+w)/2,(canvas.height+h)/2),Paint(Paint.FILTER_BITMAP_FLAG))
+     val bounds=photoBounds(canvas.width.toFloat(),canvas.height.toFloat(),image.width.toFloat(),image.height.toFloat(),viewport)
+     destination.set(bounds.left,bounds.top,bounds.left+bounds.width,bounds.top+bounds.height)
+     canvas.drawBitmap(image,null,destination,paint)
     }
    }finally{holder.unlockCanvasAndPost(canvas)}
   }catch(error:Exception){AppLog.add("Photo surface draw failed: ${error.javaClass.simpleName}")}
  }
 }
 
-@Composable fun PhotoViewer(file:JSONObject,token:String,loader:ImageLoader,modifier:Modifier,quality:PhotoQuality,onInfo:(String)->Unit,onLoaded:()->Unit,onFailure:(String)->Unit){
+@Composable fun PhotoViewer(file:JSONObject,token:String,loader:ImageLoader,modifier:Modifier,quality:PhotoQuality,viewport:MediaViewport=MediaViewport(),warmth:Float=0f,onAspect:(Float)->Unit={},onInfo:(String)->Unit,onLoaded:()->Unit,onFailure:(String)->Unit){
  val context=LocalContext.current
  val display=(context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager).defaultDisplay
  val mode=display.supportedModes.maxByOrNull{it.physicalWidth.toLong()*it.physicalHeight} ?: display.mode
@@ -95,6 +111,7 @@ private class PhotoSurface(context:Context,private val pixels:PhotoPixels):Surfa
  // Keep the current display aspect ratio even if a wider cinema mode is supported.
  val pixels=qualityPixels(photoPixels((current.physicalWidth*multiplier).toInt(),(current.physicalHeight*multiplier).toInt()),quality)
  val surface=remember(quality){PhotoSurface(context,pixels)}
+ val aspectCallback by rememberUpdatedState(onAspect)
  val infoCallback by rememberUpdatedState(onInfo)
  var failure by remember{mutableStateOf("")}
  var loading by remember{mutableStateOf(true)}
@@ -116,21 +133,32 @@ private class PhotoSurface(context:Context,private val pixels:PhotoPixels):Surfa
   loading=false
   if(result is SuccessResult){
    val image=(result.drawable as? BitmapDrawable)?.bitmap
-   if(image!=null){surface.bitmap=image;surface.drawPhoto();AppLog.add("Photo decoded ${image.width}x${image.height}; ${image.byteCount/1024} KiB; ${result.dataSource}");infoCallback("${quality.label}\nDecoded photo: ${image.width}x${image.height}\nSurface target: ${pixels.width}x${pixels.height}\nDisplay output: ${current.physicalWidth}x${current.physicalHeight}\nTransport: ${mediaTransport(file)}\nFull-size files are decoded to a bounded TV resolution; no cropping.");loadedCallback()}
+   if(image!=null){aspectCallback(image.width.toFloat()/image.height);surface.bitmap=image;surface.drawPhoto();AppLog.add("Photo decoded ${image.width}x${image.height}; ${image.byteCount/1024} KiB; ${result.dataSource}");infoCallback("${quality.label}\nDecoded photo: ${image.width}x${image.height}\nSurface target: ${pixels.width}x${pixels.height}\nDisplay output: ${current.physicalWidth}x${current.physicalHeight}\nTransport: ${mediaTransport(file)}\nFull-size files are decoded to a bounded TV resolution; no cropping.");loadedCallback()}
    else{failure="Photo format could not be rendered.";failedCallback(failure)}
   }else if(result is ErrorResult){failure="Photo failed: ${mediaError(result.throwable)}. Retry to refresh access.";AppLog.add(failure);failedCallback(failure)}
  }
  DisposableEffect(surface){onDispose{surface.bitmap=null}}
  Box(modifier.background(Color.Black)){
-  AndroidView(factory={surface},modifier=Modifier.fillMaxSize())
+  AndroidView(factory={surface},update={it.updateView(viewport,warmth)},modifier=Modifier.fillMaxSize())
   if(loading)Text("Loading full-resolution photo…",modifier=Modifier.padding(top=100.dp,start=24.dp))
   if(failure.isNotBlank())Text(failure,modifier=Modifier.padding(top=100.dp,start=24.dp))
  }
 }
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-@Composable fun VideoViewer(file:JSONObject,token:String,modifier:Modifier,fastStartup:Boolean,http1Only:Boolean=false,controlsVisible:Boolean,onActivity:(Boolean)->Unit,onControlReady:(((String)->Unit)?)->Unit,onState:(String)->Unit,onInfo:(String)->Unit,onOptions:(List<VideoQualityOption>)->Unit,onEnded:()->Unit,onInteraction:()->Unit,onFailure:(String)->Unit){
+private class ZoomVideoFrame(context:Context,player:Player):FrameLayout(context){
+ private var viewport=MediaViewport()
+ private val video=PlayerView(context).apply{this.player=player;useController=false;setEnableComposeSurfaceSyncWorkaround(true)}
+ init{clipChildren=true;clipToPadding=true;addView(video,LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.MATCH_PARENT))}
+ fun updateViewport(next:MediaViewport){if(viewport==next)return;viewport=next;transform()}
+ private fun transform(){video.scaleX=viewport.scale;video.scaleY=viewport.scale;video.translationX=viewport.x*width;video.translationY=viewport.y*height}
+ override fun onSizeChanged(w:Int,h:Int,oldw:Int,oldh:Int){super.onSizeChanged(w,h,oldw,oldh);transform()}
+}
+
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+@Composable fun VideoViewer(file:JSONObject,token:String,modifier:Modifier,fastStartup:Boolean,http1Only:Boolean=false,viewport:MediaViewport=MediaViewport(),zoomMode:Boolean=false,onAspect:(Float)->Unit={},controlsVisible:Boolean,onActivity:(Boolean)->Unit,onControlReady:(((String)->Unit)?)->Unit,onState:(String)->Unit,onInfo:(String)->Unit,onOptions:(List<VideoQualityOption>)->Unit,onEnded:()->Unit,onInteraction:()->Unit,onFailure:(String)->Unit){
  val context=LocalContext.current
+ val aspectCallback by rememberUpdatedState(onAspect)
  val chromeNow by rememberUpdatedState(controlsVisible);val activityCallback by rememberUpdatedState(onActivity);val controlCallback by rememberUpdatedState(onControlReady);val stateCallback by rememberUpdatedState(onState)
  val infoCallback by rememberUpdatedState(onInfo);val optionsCallback by rememberUpdatedState(onOptions)
  val playbackScope=rememberCoroutineScope()
@@ -179,7 +207,7 @@ private class PhotoSurface(context:Context,private val pixels:PhotoPixels):Surfa
     message=if(state==Player.STATE_BUFFERING) "Buffering video…" else ""
     if(state==Player.STATE_ENDED)ended()
    }
-   override fun onVideoSizeChanged(size:VideoSize){decoded="Decoded video: ${size.width}x${size.height}";AppLog.add("Video decoded ${size.width}x${size.height}; pixel ratio ${size.pixelWidthHeightRatio}");infoCallback("${if(nativeFile(file)) "Phone/provider media (no AlbumBeam transcode)" else "Google-provided transcode"}\n$decoded\n$trackInfo\n$decoderInfo\nPreferred hardware codecs: ${hardwareMimes.joinToString().ifBlank{"none reported"}}\n$outputInfo")}
+   override fun onVideoSizeChanged(size:VideoSize){if(size.height>0)aspectCallback(size.width*size.pixelWidthHeightRatio/size.height);decoded="Decoded video: ${size.width}x${size.height}";AppLog.add("Video decoded ${size.width}x${size.height}; pixel ratio ${size.pixelWidthHeightRatio}");infoCallback("${if(nativeFile(file)) "Phone/provider media (no AlbumBeam transcode)" else "Google-provided transcode"}\n$decoded\n$trackInfo\n$decoderInfo\nPreferred hardware codecs: ${hardwareMimes.joinToString().ifBlank{"none reported"}}\n$outputInfo")}
    override fun onTracksChanged(tracks:Tracks){
     val choices=mutableListOf<VideoQualityOption>()
     val supported=mutableListOf<Triple<Tracks.Group,Int,Format>>()
@@ -229,16 +257,14 @@ private class PhotoSurface(context:Context,private val pixels:PhotoPixels):Surfa
    }catch(e:CancellationException){throw e}
    catch(e:Exception){message="Video source failed: ${mediaError(e)}. Retry or use phone media.";AppLog.add(message);failed(message);stateCallback("Source connection failed")}
   }
-  val progressJob=playbackScope.launch{while(isActive){position=player.currentPosition.coerceAtLeast(0);duration=player.duration.takeIf{it>0} ?: 0L;delay(500)}}
+  val progressJob=playbackScope.launch{while(isActive){position=player.currentPosition.coerceAtLeast(0);duration=player.duration.takeIf{it>0} ?: 0L;delay(if(chromeNow)500 else 2000)}}
   onDispose{prepareJob.cancel();progressJob.cancel();controlCallback(null);player.removeListener(listener);player.release()}
  }
  Box(modifier.background(Color.Black)){
-  AndroidView(factory={PlayerView(it).apply{
-   this.player=player;useController=false
-  }},modifier=Modifier.fillMaxSize())
-  if(controlsVisible)Column(Modifier.align(androidx.compose.ui.Alignment.BottomCenter).fillMaxWidth().background(Color.Black.copy(alpha=0.7f)).padding(20.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+  AndroidView(factory={ZoomVideoFrame(it,player)},update={it.updateViewport(viewport)},modifier=Modifier.fillMaxSize())
+  if(controlsVisible)Column(Modifier.align(androidx.compose.ui.Alignment.BottomCenter).fillMaxWidth().background(Color.Black.copy(alpha=0.45f)).padding(horizontal=24.dp,vertical=10.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
    if(duration>0)LinearProgressIndicator(progress={ (position.toDouble()/duration).toFloat().coerceIn(0f,1f)},modifier=Modifier.fillMaxWidth())
-   Text("${playbackTime(position)} / ${if(duration>0)playbackTime(duration)else "--:--"}  •  ↑/↓ item  •  ←/→ seek 10s  •  OK play/pause  •  Hold OK for actions")
+   Text("${playbackTime(position)} / ${if(duration>0)playbackTime(duration)else "--:--"}  •  ${if(zoomMode)"D-pad pan  •  OK zoom  •  Back fit" else "↑/↓ item  •  ←/→ seek 10s  •  OK play/pause  •  Hold OK actions"}")
   }
   if(message.isNotBlank())Text(message,Modifier.padding(top=100.dp,start=24.dp))
  }

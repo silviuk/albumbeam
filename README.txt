@@ -82,6 +82,26 @@ preference. A single Google-supplied video cannot be changed into another codec
 without an alternate source or transcoding. The app performs no transcoding.
 See VALIDATION-0.2.1.txt for verification and outstanding physical-device checks.
 
+
+0.2.2 viewing controls
+Hold OK > Zoom / pan. OK cycles zoom through 1x, 1.5x, 2x, 3x and 4x; use the
+D-pad to move around the image and Back to return to fit. Hold OK again for
+incremental Zoom +/- and Fit actions. Keyboard +/- and 0 also work. Normal
+Up/Down item navigation and video Left/Right seeking resume outside zoom mode.
+Phone Remote now includes a pinch/drag touchpad, zoom/fit and directional buttons.
+Open media on the TV first. The touchpad is relative, not an image preview. It
+coalesces input to eight requests/second maximum with no queued pointer backlog.
+Zoom resets for each new item and magnifies the existing up-to-4K photo decode;
+it does not request a higher-resolution image or increase the bitmap budget.
+Video uses presentation transforms on the hardware SurfaceView path; no extra
+CPU video filtering or re-encoding. Device-specific 4K/HDR performance needs testing.
+TV viewing overlays now use a pure-black foundation, smaller translucent status
+pill and contextual controls that disappear after three seconds. TV native focus
+components retain legibility and target size, following the current TV UI guides.
+Photo warmth in TV settings/More cycles Off/Mild/Warm/Strong and persists across
+launches. It reduces green/blue without lifting black; video colors stay unchanged.
+See VALIDATION-0.2.2.txt for checks and outstanding physical-device validation.
+
 Build prerequisites
 Install Android Studio, JDK 17, Android SDK Platform 37.0 and build tools. Set
 local.properties sdk.dir to your SDK directory. Run ./gradlew assembleDebug test.

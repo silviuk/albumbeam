@@ -132,4 +132,17 @@ class WirePairingTest {
   try{server.start();val phone=Connection(server.link("127.0.0.1")).apply{auth=old.auth};assertThrows(IllegalArgumentException::class.java){phone.post("log-inbox",JSONObject())}}finally{server.stop()}
  }
 
+ @Test fun viewportCommandsAreAuthenticatedValidatedAndNotReplayed(){
+  val changes=mutableListOf<ViewportChange>();val server=PairServer(viewport={changes+=it}){}
+  try{
+   server.start();val phone=Connection(server.link("127.0.0.1"))
+   val request=ViewportChange(1.5f,.1f,0f).json().put("requestId","view-once")
+   assertThrows(IllegalArgumentException::class.java){phone.post("viewport",request)}
+   phone.pair();phone.post("viewport",request);phone.post("viewport",request)
+   assertEquals(listOf(ViewportChange(1.5f,.1f,0f)),changes)
+   assertThrows(IllegalArgumentException::class.java){phone.post("viewport",request.put("requestId","bad").put("scale",999))}
+   assertEquals(1,changes.size)
+  }finally{server.stop()}
+ }
+
 }

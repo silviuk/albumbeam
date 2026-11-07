@@ -81,6 +81,9 @@ class MainActivity:ComponentActivity() {
  private val nearby by lazy{NearbyPairing(this)}
  private var manualDisplay by mutableStateOf("")
  private var verificationDisplay by mutableStateOf("")
+ private var photoWarmth by mutableFloatStateOf(0f)
+ private var remoteViewportHandler:((ViewportChange)->Unit)?=null
+ private fun cycleWarmth(){photoWarmth=nextWarmth(photoWarmth);getSharedPreferences("settings",MODE_PRIVATE).edit().putFloat("photo-warmth",photoWarmth).apply()}
  private var remoteCommandHandler:((RemoteAction)->Unit)?=null
  private var videoControl:((String)->Unit)?=null
  @Volatile private var remoteSummary="No media selected"
@@ -193,12 +196,12 @@ class MainActivity:ComponentActivity() {
   try { authorized(Identity.getAuthorizationClient(this).getAuthorizationResultFromIntent(result.data)) } catch(e:Exception){selectionFailure("Authorization cancelled or denied. Try again.",e.javaClass.simpleName)}
  }
  override fun onCreate(b:Bundle?) {
-  super.onCreate(b); encryptMedia=getSharedPreferences("settings",MODE_PRIVATE).getBoolean("encrypt-media",true); if(BuildConfig.FLAVOR=="phone")enableEdgeToEdge(); AppLog.add("Started ${BuildConfig.FLAVOR} app v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}), Android ${android.os.Build.VERSION.RELEASE}, ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"); window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+  super.onCreate(b);photoWarmth=getSharedPreferences("settings",MODE_PRIVATE).getFloat("photo-warmth",0f).coerceIn(0f,1f); encryptMedia=getSharedPreferences("settings",MODE_PRIVATE).getBoolean("encrypt-media",true); if(BuildConfig.FLAVOR=="phone")enableEdgeToEdge(); AppLog.add("Started ${BuildConfig.FLAVOR} app v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}), Android ${android.os.Build.VERSION.RELEASE}, ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"); window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
   setContent {
    val dark=isSystemInDarkTheme()
-   val colors=if(BuildConfig.FLAVOR=="tv")darkColorScheme() else if(android.os.Build.VERSION.SDK_INT>=31){if(dark)dynamicDarkColorScheme(this)else dynamicLightColorScheme(this)}else if(dark)darkColorScheme()else lightColorScheme()
+   val colors=if(BuildConfig.FLAVOR=="tv")darkColorScheme(background=Color.Black,surface=Color(0xFF0D0D0F),primary=Color(0xFFE0D3BD),onSurface=Color(0xFFDADADA)) else if(android.os.Build.VERSION.SDK_INT>=31){if(dark)dynamicDarkColorScheme(this)else dynamicLightColorScheme(this)}else if(dark)darkColorScheme()else lightColorScheme()
    MaterialTheme(colorScheme=colors){
-    if(BuildConfig.FLAVOR=="tv")androidx.tv.material3.MaterialTheme{Box(Modifier.fillMaxSize().background(Color(0xFF101014))){TV()}}else Surface(Modifier.fillMaxSize()){Phone()}
+    if(BuildConfig.FLAVOR=="tv")androidx.tv.material3.MaterialTheme(colorScheme=androidx.tv.material3.darkColorScheme(background=Color.Black,surface=Color(0xFF0D0D0F),primary=Color(0xFFE0D3BD),onSurface=Color(0xFFDADADA))){Box(Modifier.fillMaxSize().background(Color.Black)){TV()}}else Surface(Modifier.fillMaxSize()){Phone()}
    }
   }
   if(BuildConfig.FLAVOR=="tv") {
@@ -221,7 +224,7 @@ class MainActivity:ComponentActivity() {
   val device=restored ?: DeviceIdentity.create()
   hasSavedPairing=restored!=null && saved?.optBoolean("paired")==true
   pairingStore.save("tv",device.json().put("paired",hasSavedPairing))
-  server=PairServer(device=device,initiallyPaired=hasSavedPairing,onPaired={pairingStore.save("tv",device.json().put("paired",true));runOnUiThread{hasSavedPairing=true;qr=null;status="Phone paired. Choose media on your phone."}},diagnostic={message -> runOnUiThread{status=message.take(450)}},control={action->runOnUiThread{remoteCommandHandler?.invoke(action)}},state={remoteSummary},nativeSharing={session.startsWith("native:")},selectionId={if(session.startsWith("native:"))"" else session}) { j -> runOnUiThread { AppLog.add("TV: received media selection from companion"); val next=j.getString("session"); if(session.isNotBlank() && next!=session) end(false); token=j.getString("token"); session=next; qr=null
+  server=PairServer(device=device,initiallyPaired=hasSavedPairing,onPaired={pairingStore.save("tv",device.json().put("paired",true));runOnUiThread{hasSavedPairing=true;qr=null;status="Phone paired. Choose media on your phone."}},diagnostic={message -> runOnUiThread{status=message.take(450)}},control={action->runOnUiThread{remoteCommandHandler?.invoke(action)}},viewport={input->runOnUiThread{remoteViewportHandler?.invoke(input)}},state={remoteSummary},nativeSharing={session.startsWith("native:")},selectionId={if(session.startsWith("native:"))"" else session}) { j -> runOnUiThread { AppLog.add("TV: received media selection from companion"); val next=j.getString("session"); if(session.isNotBlank() && next!=session) end(false); token=j.getString("token"); session=next; qr=null
    if(j.optString("source")=="native"){
     job?.cancel();val list=j.getJSONArray("items");items=(0 until list.length()).map{list.getJSONObject(it)}
     require(items.size<=2000);status="${items.size} phone/provider items • Keep phone connected";AppLog.add("TV: native selection loaded (${items.size} items)")
@@ -352,7 +355,7 @@ class MainActivity:ComponentActivity() {
   }}
   AppLog.add("Session ended; local state cleared; remote deletion is best effort"); status="Session ended"; if(reset) pairing()
  }
- @Composable fun Action(label:String,modifier:Modifier=Modifier,onClick:()->Unit) { if(BuildConfig.FLAVOR=="tv") androidx.tv.material3.Button(onClick=onClick,modifier=modifier){Text(label)} else Button(onClick=onClick,modifier=modifier){Text(label)} }
+ @Composable fun Action(label:String,modifier:Modifier=Modifier,onClick:()->Unit) { if(BuildConfig.FLAVOR=="tv") androidx.tv.material3.Button(onClick=onClick,modifier=modifier.heightIn(min=48.dp),contentPadding=PaddingValues(horizontal=16.dp,vertical=10.dp),colors=androidx.tv.material3.ButtonDefaults.colors(containerColor=Color.White.copy(alpha=.055f),contentColor=Color(0xFFDADADA),focusedContainerColor=Color(0xFFE0D3BD),focusedContentColor=Color.Black)){androidx.tv.material3.Text(label,style=androidx.tv.material3.MaterialTheme.typography.labelLarge,maxLines=1)} else Button(onClick=onClick,modifier=modifier){Text(label)} }
 
  @Composable fun ActivityLog(){
   var expanded by remember{mutableStateOf(false)}
@@ -432,6 +435,12 @@ class MainActivity:ComponentActivity() {
         Text(tvState.ifBlank{"Choose media, then use these controls to browse and play."})
         RemoteButtonRow(listOf("Previous" to RemoteAction.PREVIOUS,"Next" to RemoteAction.NEXT))
         RemoteButtonRow(listOf("Play" to RemoteAction.PLAY,"Pause" to RemoteAction.PAUSE,"Stop" to RemoteAction.STOP))
+        PhoneViewPad(connection){status=it}
+        RemoteButtonRow(listOf("Zoom −" to RemoteAction.ZOOM_OUT,"Fit" to RemoteAction.ZOOM_RESET,"Zoom +" to RemoteAction.ZOOM_IN))
+        RemoteButtonRow(listOf("Pan ↑" to RemoteAction.PAN_UP))
+        RemoteButtonRow(listOf("Pan ←" to RemoteAction.PAN_LEFT,"Pan ↓" to RemoteAction.PAN_DOWN,"Pan →" to RemoteAction.PAN_RIGHT))
+        OutlinedButton(enabled=connection!=null,onClick={sendControl(RemoteAction.PHOTO_WARMTH)}){Text("Cycle photo warmth")}
+        Text("Warmth changes photos only. Video retains its normal colors and HDR output.",style=MaterialTheme.typography.bodySmall)
         RemoteButtonRow(listOf("Start slideshow" to RemoteAction.START_SLIDESHOW,"Stop slideshow" to RemoteAction.STOP_SLIDESHOW))
        }
        2->{
@@ -500,6 +509,10 @@ class MainActivity:ComponentActivity() {
   }}}
  }
  @Composable fun TV() {
+  var viewport by remember{mutableStateOf(MediaViewport())}
+  var zoomMode by remember{mutableStateOf(false)}
+  var mediaAspect by remember{mutableFloatStateOf(0f)}
+  val displayAspect=remember{val mode=(getSystemService(WINDOW_SERVICE) as android.view.WindowManager).defaultDisplay.mode;mode.physicalWidth.toFloat()/mode.physicalHeight}
   var tvSettings by remember{mutableStateOf(false)}
   var qualityOpen by remember{mutableStateOf(false)}
   var http1Only by remember{mutableStateOf(false)}
@@ -518,7 +531,18 @@ class MainActivity:ComponentActivity() {
   val viewerFocus=remember{FocusRequester()};val firstControlFocus=remember{FocusRequester()}
   fun activity(focus:Boolean=false){val hidden=!controlsVisible;controlsVisible=true;controlActivity=idleControls.touch();if(hidden && focus)restoreControlFocus=true}
   fun openActions(){actionsFocused=true;activity();restoreControlFocus=true}
-  LaunchedEffect(selected){actionsFocused=false;centerHeld=false;if(selected>=0){activity();withFrameNanos{};runCatching{viewerFocus.requestFocus()}}else qualityOpen=false}
+  fun transform(input:ViewportChange){
+   if(items.getOrNull(selected)==null){status="Open a photo or video before zooming";return}
+   slideshow=false;zoomMode=true;actionsFocused=false
+   viewport=viewport.change(input,mediaAspect,displayAspect);activity()
+  }
+  fun resetView(){viewport=MediaViewport();zoomMode=false;activity()}
+  fun backFromViewer(){
+   if(actionsFocused){actionsFocused=false;controlsVisible=false;runCatching{viewerFocus.requestFocus()}}
+   else if(zoomMode || viewport.scale>1f){resetView();controlsVisible=false}
+   else{selected=-1;slideshow=false}
+  }
+  LaunchedEffect(selected,epoch){viewport=MediaViewport();zoomMode=false;mediaAspect=0f;actionsFocused=false;centerHeld=false;if(selected>=0){activity();withFrameNanos{};runCatching{viewerFocus.requestFocus()}}else qualityOpen=false}
   LaunchedEffect(selected,controlActivity,qualityOpen){
    if(selected>=0 && !qualityOpen){val expected=controlActivity;delay(idleControls.timeoutMillis);if(idleControls.shouldHide(expected,qualityOpen)){controlsVisible=false;actionsFocused=false;runCatching{viewerFocus.requestFocus()}}}
   }
@@ -531,7 +555,8 @@ class MainActivity:ComponentActivity() {
   LaunchedEffect(items.isEmpty()){if(items.isEmpty()){selected=-1;slideshow=false}}
   fun advance(){ if(items.isNotEmpty()) selected=(selected+1)%items.size }
   SideEffect{
-   remoteSummary="${items.size} items • "+(if(selected<0) "Grid" else "Item ${selected+1} • $playerState")+(if(slideshow) " • Slideshow" else "")
+   remoteViewportHandler={qualityOpen=false;transform(it)}
+   remoteSummary="${items.size} items • Zoom ${"%.1f".format(viewport.scale)}× • Photo warmth ${warmthLabel(photoWarmth)} • "+(if(selected<0) "Grid" else "Item ${selected+1} • $playerState")+(if(slideshow) " • Slideshow" else "")
    remoteCommandHandler={command->
     AppLog.add("TV remote command: ${command.wire}")
     if(items.isEmpty()){status="Select photos or videos before using playback controls."}
@@ -545,6 +570,14 @@ class MainActivity:ComponentActivity() {
       RemoteAction.STOP->{slideshow=false;selected=-1}
       RemoteAction.START_SLIDESHOW->{slideshow=true;if(selected<0)selected=0;videoControl?.invoke("play")}
       RemoteAction.STOP_SLIDESHOW->{slideshow=false}
+      RemoteAction.ZOOM_IN->transform(ViewportChange(1.25f))
+      RemoteAction.ZOOM_OUT->transform(ViewportChange(.8f))
+      RemoteAction.ZOOM_RESET->resetView()
+      RemoteAction.PAN_LEFT->transform(ViewportChange(dx=.1f))
+      RemoteAction.PAN_RIGHT->transform(ViewportChange(dx=-.1f))
+      RemoteAction.PAN_UP->transform(ViewportChange(dy=.1f))
+      RemoteAction.PAN_DOWN->transform(ViewportChange(dy=-.1f))
+      RemoteAction.PHOTO_WARMTH->cycleWarmth()
      }
     }
    }
@@ -565,24 +598,26 @@ class MainActivity:ComponentActivity() {
     Action("Close"){showCode=false}
    }}
   }
-  BackHandler(selected>=0){selected=-1;slideshow=false}
+  BackHandler(selected>=0){backFromViewer()}
   if(tvSettings)Dialog(onDismissRequest={tvSettings=false},properties=DialogProperties(usePlatformDefaultWidth=false)){
-   Box(Modifier.widthIn(max=720.dp).background(Color(0xFF202027),androidx.compose.foundation.shape.RoundedCornerShape(24.dp)).padding(32.dp)){
+   Box(Modifier.widthIn(max=720.dp).background(Color(0xFF0D0D0F),androidx.compose.foundation.shape.RoundedCornerShape(24.dp)).padding(32.dp)){
     Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(16.dp)){
      Text("Settings & diagnostics",style=MaterialTheme.typography.headlineMedium)
      Text("AlbumBeam ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
      Text("Device pairing is remembered. Google authorization and selections expire separately. Forgetting the phone revokes its access to this TV.")
      Action("Forget paired phone"){forgetPairing();tvSettings=false}
      Action("Send detailed log to phone"){server?.sendLogToPhone();status="TV log queued for paired phone"}
+     Action("Photo warmth: ${warmthLabel(photoWarmth)}"){cycleWarmth()}
+     Text("Warmth uses a black-preserving photo filter. Video colors and HDR stay unchanged.")
      ActivityLog()
      Action("Close"){tvSettings=false}
     }
    }
   }
   Column(Modifier.fillMaxSize().padding(horizontal=40.dp,vertical=24.dp),verticalArrangement=Arrangement.spacedBy(16.dp)) {
-   Text("AlbumBeam",style=MaterialTheme.typography.headlineLarge)
+   Text("AlbumBeam",style=MaterialTheme.typography.headlineMedium)
    Text(status,style=MaterialTheme.typography.bodyLarge)
-   Text("Fullscreen: ↑/↓ previous/next • Video ←/→ seek • OK play/pause • Hold OK for actions",style=MaterialTheme.typography.bodySmall)
+
    Row(horizontalArrangement=Arrangement.spacedBy(16.dp)) {
     Action("End viewing"){end()}
     Action("Retry"){retryCount++;if(session.isBlank()) pairing() else load()}
@@ -603,7 +638,7 @@ class MainActivity:ComponentActivity() {
    if(selected<0) LazyVerticalGrid(modifier=Modifier.weight(1f),columns=GridCells.Adaptive(180.dp),contentPadding=PaddingValues(12.dp),verticalArrangement=Arrangement.spacedBy(20.dp),horizontalArrangement=Arrangement.spacedBy(20.dp)) {
     itemsIndexed(items){i,item->androidx.tv.material3.Card(onClick={selected=i}){
      Column{
-      if(item.optString("type")=="VIDEO" && nativeFile(item.getJSONObject("mediaFile")))Box(Modifier.fillMaxWidth().height(110.dp).background(Color(0xFF30303B)),contentAlignment=Alignment.Center){androidx.tv.material3.Text("▶",style=androidx.tv.material3.MaterialTheme.typography.headlineLarge)}
+      if(item.optString("type")=="VIDEO" && nativeFile(item.getJSONObject("mediaFile")))Box(Modifier.fillMaxWidth().height(110.dp).background(Color(0xFF101012)),contentAlignment=Alignment.Center){androidx.tv.material3.Text("▶",style=androidx.tv.material3.MaterialTheme.typography.headlineLarge)}
       else AsyncImage(ImageRequest.Builder(context).data(mediaUrl(item.getJSONObject("mediaFile"),"=w640-h360")).addHeader("Authorization","Bearer $token").build(),"${if(item.optString("type")=="VIDEO")"Video" else "Photo"} ${i+1}",imageLoader=loader,contentScale=ContentScale.Crop,modifier=Modifier.fillMaxWidth().height(110.dp))
       androidx.tv.material3.Text("${if(item.optString("type")=="VIDEO")"▶ Video" else "Photo"} ${i+1}",Modifier.padding(12.dp))
      }
@@ -611,7 +646,7 @@ class MainActivity:ComponentActivity() {
    }
   }
   items.getOrNull(selected)?.let { item ->
-   Dialog(onDismissRequest={if(actionsFocused){actionsFocused=false;controlsVisible=false;runCatching{viewerFocus.requestFocus()}}else{selected=-1;slideshow=false}},properties=DialogProperties(usePlatformDefaultWidth=false,decorFitsSystemWindows=false)){
+   Dialog(onDismissRequest={backFromViewer()},properties=DialogProperties(usePlatformDefaultWidth=false,decorFitsSystemWindows=false)){
     Box(Modifier.fillMaxSize().background(Color.Black)
      .onPreviewKeyEvent{event->
       val key=event.nativeKeyEvent
@@ -621,6 +656,13 @@ class MainActivity:ComponentActivity() {
       else if(actionsFocused && centerHeld && key.keyCode in listOf(android.view.KeyEvent.KEYCODE_DPAD_CENTER,android.view.KeyEvent.KEYCODE_ENTER)){if(key.action==android.view.KeyEvent.ACTION_UP)centerHeld=false;true}
       else if(actionsFocused){if(down && key.keyCode!=android.view.KeyEvent.KEYCODE_BACK)activity();false}
       else when{
+       down && zoomMode && key.keyCode in listOf(19,20,21,22)->{
+        if(key.repeatCount%2==0)transform(when(key.keyCode){19->ViewportChange(dy=.06f);20->ViewportChange(dy=-.06f);21->ViewportChange(dx=.06f);else->ViewportChange(dx=-.06f)})
+        true
+       }
+       down && key.keyCode in listOf(android.view.KeyEvent.KEYCODE_PLUS,android.view.KeyEvent.KEYCODE_EQUALS,android.view.KeyEvent.KEYCODE_NUMPAD_ADD)->{transform(ViewportChange(1.25f));true}
+       down && key.keyCode in listOf(android.view.KeyEvent.KEYCODE_MINUS,android.view.KeyEvent.KEYCODE_NUMPAD_SUBTRACT)->{transform(ViewportChange(.8f));true}
+       down && key.keyCode==android.view.KeyEvent.KEYCODE_0->{resetView();true}
        down && viewerDirection(key.keyCode,isVideo)!=null->{
         activity();slideshow=false
         when(viewerDirection(key.keyCode,isVideo)){
@@ -634,7 +676,7 @@ class MainActivity:ComponentActivity() {
        }
        key.keyCode in listOf(android.view.KeyEvent.KEYCODE_DPAD_CENTER,android.view.KeyEvent.KEYCODE_ENTER)->{
         if(down){if(key.repeatCount==0)centerHeld=false;if(key.isLongPress || key.repeatCount>0){centerHeld=true;openActions()}}
-        else if(key.action==android.view.KeyEvent.ACTION_UP && !centerHeld){activity();if(isVideo)videoControl?.invoke("toggle")else{openActions()}}
+        else if(key.action==android.view.KeyEvent.ACTION_UP && !centerHeld){activity();if(zoomMode)transform(ViewportChange(viewport.nextZoom()/viewport.scale))else if(isVideo)videoControl?.invoke("toggle")else{openActions()}}
         true
        }
        down && key.keyCode==android.view.KeyEvent.KEYCODE_MENU->{openActions();true}
@@ -646,21 +688,32 @@ class MainActivity:ComponentActivity() {
      .focusRequester(viewerFocus).focusable()){
      val file=item.getJSONObject("mediaFile")
      if(item.getString("type")=="VIDEO")key(file.optString("baseUrl"),token,retryCount,fastStartup,http1Only){
-      VideoViewer(file,token,Modifier.fillMaxSize(),fastStartup=fastStartup,http1Only=http1Only,controlsVisible=controlsVisible,onActivity={focus->activity(focus)},onControlReady={videoControl=it},onState={playerState=it},onInfo={qualityInfo=it},onOptions={videoOptions=it},onEnded={if(slideshow)advance()},onInteraction={slideshow=false},onFailure={message->status=message})
+      VideoViewer(file,token,Modifier.fillMaxSize(),fastStartup=fastStartup,http1Only=http1Only,viewport=viewport,zoomMode=zoomMode,onAspect={mediaAspect=it;viewport=viewport.bounded(it,displayAspect)},controlsVisible=controlsVisible,onActivity={focus->activity(focus)},onControlReady={videoControl=it},onState={playerState=it},onInfo={qualityInfo=it},onOptions={videoOptions=it},onEnded={if(slideshow)advance()},onInteraction={slideshow=false},onFailure={message->status=message})
      }else key(file.optString("baseUrl"),token,retryCount,photoQuality){
-      PhotoViewer(file,token,loader,Modifier.fillMaxSize(),quality=photoQuality,onInfo={qualityInfo=it},onLoaded={loaded=true},onFailure={status=it})
+      PhotoViewer(file,token,loader,Modifier.fillMaxSize(),quality=photoQuality,viewport=viewport,warmth=photoWarmth,onAspect={mediaAspect=it;viewport=viewport.bounded(it,displayAspect)},onInfo={qualityInfo=it},onLoaded={loaded=true},onFailure={status=it})
      }
-     if(controlsVisible)Row(Modifier.align(Alignment.TopCenter).fillMaxWidth().background(Color.Black.copy(alpha=0.75f)).horizontalScroll(rememberScrollState()).padding(8.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)){
-      Action("Previous",modifier=Modifier.focusRequester(firstControlFocus)){slideshow=false;selected=(selected-1+items.size)%items.size}
-      Action("Next"){slideshow=false;advance()}
-      Action(if(slideshow) "Pause slideshow" else "Slideshow"){slideshow=!slideshow}
-      Action("Retry"){retryCount++;loaded=false;qualityInfo="";videoOptions=emptyList();load()}
-      Action("Quality & info"){slideshow=false;qualityOpen=true}
-      Action("TV log → phone"){server?.sendLogToPhone()}
+     if(controlsVisible && actionsFocused)Row(Modifier.align(Alignment.TopCenter).padding(top=16.dp).widthIn(max=850.dp).background(Color.Black.copy(alpha=.65f),androidx.compose.foundation.shape.RoundedCornerShape(24.dp)).horizontalScroll(rememberScrollState()).padding(8.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)){
+      if(zoomMode){
+       Action("Zoom +",modifier=Modifier.focusRequester(firstControlFocus)){transform(ViewportChange(1.25f));runCatching{viewerFocus.requestFocus()}}
+       Action("Zoom −"){transform(ViewportChange(.8f));runCatching{viewerFocus.requestFocus()}}
+       Action("Fit"){resetView();actionsFocused=false}
+      }else{
+       Action("Zoom / pan",modifier=Modifier.focusRequester(firstControlFocus)){slideshow=false;zoomMode=true;actionsFocused=false;activity();runCatching{viewerFocus.requestFocus()}}
+       Action(if(slideshow)"Pause slides" else "Slideshow"){resetView();slideshow=!slideshow}
+      }
+      Action("More"){slideshow=false;qualityOpen=true}
       Action("Grid"){selected=-1;slideshow=false}
      }
+     else if(controlsVisible)androidx.tv.material3.Text(if(zoomMode)"${"%.1f".format(viewport.scale)}×   •   D-pad pan   •   OK zoom   •   Back fit" else "${selected+1} / ${items.size}   •   ${"%.1f".format(viewport.scale)}×   •   Hold OK for actions",
+      Modifier.align(Alignment.TopStart).padding(20.dp).background(Color.Black.copy(alpha=.55f),androidx.compose.foundation.shape.RoundedCornerShape(12.dp)).padding(horizontal=12.dp,vertical=8.dp),
+      color=Color(0xFFDADADA),style=androidx.tv.material3.MaterialTheme.typography.labelMedium)
      if(qualityOpen)Dialog(onDismissRequest={qualityOpen=false}){Surface(Modifier.padding(24.dp),shape=MaterialTheme.shapes.large){Column(Modifier.widthIn(max=650.dp).padding(24.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
-      Text("Quality & info",style=MaterialTheme.typography.headlineMedium)
+      Text("Viewing options",style=MaterialTheme.typography.headlineMedium)
+      Text("Zoom ${"%.1f".format(viewport.scale)}× • Photo warmth ${warmthLabel(photoWarmth)}")
+      Action("Photo warmth: ${warmthLabel(photoWarmth)}"){cycleWarmth()}
+      Text("Warmth applies to photos only and keeps black pixels black. Zoom enlarges the current bounded photo decode; it does not fetch larger images.",style=MaterialTheme.typography.bodySmall)
+      Action("Retry media"){retryCount++;loaded=false;qualityInfo="";videoOptions=emptyList();qualityOpen=false;load()}
+      Action("Send TV log to phone"){server?.sendLogToPhone()}
       Text("Source metadata: ${sourceDimensions(file)} • ${file.optString("mimeType")}")
       Text(qualityInfo.ifBlank{"Waiting for decoded media details…"})
       if(item.getString("type")=="VIDEO"){
@@ -684,5 +737,5 @@ class MainActivity:ComponentActivity() {
    }
   }
  }
- override fun onDestroy(){reconnectJob?.cancel();remoteCommandHandler=null;videoControl=null;logReceiver?.cancel();nearby.close();networkWatch?.cancel();if(BuildConfig.FLAVOR=="tv")end(false);token="";server?.stop();connection=null;super.onDestroy()}
+ override fun onDestroy(){remoteViewportHandler=null;reconnectJob?.cancel();remoteCommandHandler=null;videoControl=null;logReceiver?.cancel();nearby.close();networkWatch?.cancel();if(BuildConfig.FLAVOR=="tv")end(false);token="";server?.stop();connection=null;super.onDestroy()}
 }

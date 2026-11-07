@@ -1,0 +1,31 @@
+AlbumBeam 0.2.2 — zoom, OLED overlays and photo warmth
+
+Implemented:
+- TV long-OK Zoom / pan mode: OK cycles 1/1.5/2/3/4x; D-pad pans; Back fits.
+  Long-OK zoom actions include incremental +/- and Fit. Keyboard +/- and 0 work.
+- Normal-mode item navigation and video seeking remain unchanged.
+- Phone Remote touchpad pinches/drags. Input is coalesced, with at most eight
+  authenticated requests per second and one in flight. No image preview is copied.
+- Viewport values are finite, bounded to 1–4x, constrained to the fitted content,
+  reset on item/session changes, and validated/deduplicated on the LAN endpoint.
+- Photos transform the existing bounded decode on hardware Canvas only on change.
+  No additional downloads, bitmap copies, larger decode, or continuous redraw loop.
+- Video retains Media3 hardware decode and SurfaceView. A clipped native view
+  transforms the presentation; no texture/readback, transcoding or CPU frame filter.
+- Pure-black TV background, faint neutral controls with clear focus, a small
+  translucent status pill, and a compact contextual long-OK menu. HUD hides in 3s.
+- Persistent Off/Mild/Warm/Strong photo warmth attenuates green/blue using a
+  hardware Canvas color filter with zero offsets, preserving true black.
+  Video warmth is intentionally not applied; its normal color/HDR path is retained.
+
+Local validation:
+- Kotlin/Compose source and instrumentation source compilation.
+- 52 non-network tests: includes portrait/landscape fit, bounded crop/pan, zoom
+  limits, gesture composition/drain, input rejection, warmth and previous controls.
+- New real TLS endpoint test checks authentication, malformed commands and replay.
+
+Pending:
+- Full CI build, all 75 tests per flavor and lint.
+- Chromecast physical remote/phone gestures, SurfaceView clip alignment, actual
+  4K60/HDR behavior, GPU/CPU measurements and visual review on an OLED display.
+- Device screenshots and performance measurements are not available in this host.
