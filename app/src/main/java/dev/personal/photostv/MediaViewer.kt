@@ -297,7 +297,7 @@ private class ZoomVideoFrame(context:Context,player:Player):FrameLayout(context)
  }
  Box(modifier.background(Color.Black)){
   AndroidView(factory={ZoomVideoFrame(it,player)},update={it.updateViewport(viewport)},modifier=Modifier.fillMaxSize())
-  if(controlsVisible)Column(Modifier.align(androidx.compose.ui.Alignment.BottomCenter).fillMaxWidth().background(Color.Black.copy(alpha=0.45f)).padding(horizontal=24.dp,vertical=10.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+  if(controlsVisible)Column(Modifier.align(androidx.compose.ui.Alignment.BottomCenter).fillMaxWidth().background(Color.Black.copy(alpha=0.75f)).padding(horizontal=24.dp,vertical=10.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
    if(duration>0)LinearProgressIndicator(progress={ (position.toDouble()/duration).toFloat().coerceIn(0f,1f)},modifier=Modifier.fillMaxWidth())
    Text("${playbackTime(position)} / ${if(duration>0)playbackTime(duration)else "--:--"}  •  ${if(zoomMode)"D-pad pan  •  OK zoom  •  Back fit" else "↑/↓ item  •  ←/→ seek 10s  •  OK play/pause  •  Hold OK actions"}")
   }

@@ -749,7 +749,7 @@ class MainActivity:ComponentActivity() {
       ViewerAction("Grid"){selected=-1;slideshow=false}
      }
      else if(controlsVisible)androidx.tv.material3.Text(if(zoomMode)"${"%.1f".format(viewport.scale)}×   •   D-pad pan   •   OK zoom   •   Back fit" else "${selected+1} / ${items.size}   •   ${"%.1f".format(viewport.scale)}×   •   Hold OK for actions",
-      Modifier.align(Alignment.TopStart).padding(20.dp).background(Color.Black.copy(alpha=.55f),androidx.compose.foundation.shape.RoundedCornerShape(12.dp)).padding(horizontal=12.dp,vertical=8.dp),
+      Modifier.align(Alignment.TopStart).padding(20.dp).background(Color.Black.copy(alpha=.75f),androidx.compose.foundation.shape.RoundedCornerShape(12.dp)).padding(horizontal=12.dp,vertical=8.dp),
       color=Color(0xFFDADADA),style=androidx.tv.material3.MaterialTheme.typography.labelMedium)
      if(qualityOpen)Dialog(onDismissRequest={qualityOpen=false}){Surface(Modifier.padding(24.dp),shape=MaterialTheme.shapes.large){Column(Modifier.widthIn(max=650.dp).padding(24.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
       Text("Viewing options",style=MaterialTheme.typography.titleLarge)
