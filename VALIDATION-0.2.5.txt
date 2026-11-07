@@ -4,7 +4,8 @@ Evidence from the supplied v0.2.3 log:
 - The 33,100,583-byte MP4 returns HTTP 200 for bytes=33088618- and bytes=44-.
 - First frame occurs after 11,603ms and 10,061ms; HEVC initialization takes
   319ms and 72ms. Delivery/MP4 metadata seeking dominates decoder startup.
-- Other attempts show HTTP/2 resets and 20s timeouts addressed by v0.2.4 fallback.
+- Earlier 20s timeouts retain the v0.2.4 connection fallback. Some stream resets
+  coincide with navigation/seeks and may reflect cancellation.
 
 Implementation:
 - Share one sequential download across extractor open/close/seek cycles when
@@ -16,6 +17,21 @@ Implementation:
   64 KiB worker buffer and 8 MiB read-ahead beyond the furthest requested byte.
 - Delete on video disposal; remove crash leftovers on next app startup.
 
-Validation in progress: compile, local buffer regressions, real TLS ignored-range
-regression, full unit tests, lint, APK builds and signature/package checks.
-Physical Chromecast playback of the user's private Google videos is not available.
+Validation completed:
+- Kotlin/Compose compilation and 65 non-network tests pass locally.
+- Buffer tests verify byte-exact footer/media/backward/replay reads with one GET,
+  playback reads before EOF, actual 206 bypass, disk limits, EOF and deletion.
+- Real TLS whole-file-server regression verifies one request across tail metadata
+  and backward reads. It collects partial network reads until the requested bytes
+  are complete, matching the DataSource read contract.
+- Both app builds, full unit suites, phone/TV lint and instrumentation APK builds
+  pass in GitHub Actions: https://github.com/silviuk/albumbeam/actions/runs/42404823238
+- Original signing certificate, package IDs, PhotosBeam version 0.2.5 (16),
+  unchanged dependency classes, existing resource IDs and 16 KiB alignment verified.
+- Changes after APK packaging affect regression assertions/test logging only;
+  APK production code, resources, version and dependencies match the validated tree.
+
+Not verified: physical Chromecast playback of the user's private Google videos,
+actual startup improvement on the user's network, or instrumentation/device tests.
+Initial server latency and a first pass to tail metadata remain unavoidable when
+Google returns whole files. Files beyond the disk budget retain direct streaming.
