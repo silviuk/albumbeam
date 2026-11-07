@@ -196,7 +196,8 @@ class MainActivity:ComponentActivity() {
   try { authorized(Identity.getAuthorizationClient(this).getAuthorizationResultFromIntent(result.data)) } catch(e:Exception){selectionFailure("Authorization cancelled or denied. Try again.",e.javaClass.simpleName)}
  }
  override fun onCreate(b:Bundle?) {
-  super.onCreate(b);photoWarmth=getSharedPreferences("settings",MODE_PRIVATE).getFloat("photo-warmth",0f).coerceIn(0f,1f); encryptMedia=getSharedPreferences("settings",MODE_PRIVATE).getBoolean("encrypt-media",true); if(BuildConfig.FLAVOR=="phone")enableEdgeToEdge(); AppLog.add("Started ${BuildConfig.FLAVOR} app v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}), Android ${android.os.Build.VERSION.RELEASE}, ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"); window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+  super.onCreate(b)
+  java.io.File(cacheDir,"video-replay").listFiles()?.forEach{it.delete()};photoWarmth=getSharedPreferences("settings",MODE_PRIVATE).getFloat("photo-warmth",0f).coerceIn(0f,1f); encryptMedia=getSharedPreferences("settings",MODE_PRIVATE).getBoolean("encrypt-media",true); if(BuildConfig.FLAVOR=="phone")enableEdgeToEdge(); AppLog.add("Started ${BuildConfig.FLAVOR} app v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}), Android ${android.os.Build.VERSION.RELEASE}, ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"); window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
   setContent {
    val dark=isSystemInDarkTheme()
    val colors=if(BuildConfig.FLAVOR=="tv")darkColorScheme(background=Color.Black,surface=Color(0xFF0D0D0F),primary=Color(0xFFE0D3BD),onSurface=Color(0xFFDADADA)) else if(android.os.Build.VERSION.SDK_INT>=31){if(dark)dynamicDarkColorScheme(this)else dynamicLightColorScheme(this)}else if(dark)darkColorScheme()else lightColorScheme()

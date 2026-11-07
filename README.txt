@@ -366,3 +366,23 @@ bytes transferred, throughput, ignored Range requests and first-frame time.
 Signed URLs and bearer tokens remain excluded. The fallback addresses a stalled
 connection path; it cannot guarantee startup time when Google's servers delay
 both paths, ignore Range, or require downloading MP4 metadata near the file end.
+
+Whole-file Google responses in v0.2.5
+The v0.2.3 device log confirms a 33 MB MP4 returned HTTP 200 to tail and backward
+Range requests. The player consequently reopened/re-read the file three times;
+first frame took 10–12s while hardware decoder initialization took only 72–319ms.
+
+Google video now keeps a single sequential response in a private, temporary disk
+buffer when the server ignores Range. MP4 metadata seeks, backward seeks and replay
+reuse downloaded bytes. Fast-start MP4s can play before the download completes;
+if essential metadata is at the end and the server ignores ranges, bytes up to
+that metadata must still arrive once. Video/audio bytes are unchanged.
+
+A real HTTP 206 response retains normal direct range streaming. The disk budget
+is at most 1 GiB, leaving 128 MiB free; known larger files or insufficient space
+use direct streaming. Unknown-length downloads are also capped. Read-ahead is
+limited to 8 MiB beyond the furthest requested byte. The worker uses a 64 KiB
+transfer buffer. Network/disk failure falls back to the normal retry path.
+Buffer files are deleted when playback is left/replaced/ended. Files left by a
+process kill are removed at app startup. Tokens and signed URLs stay in memory.
+Phone-provided media streaming and v0.2.4 resolution/codec controls are unchanged.

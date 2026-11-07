@@ -182,6 +182,9 @@ private class ZoomVideoFrame(context:Context,player:Player):FrameLayout(context)
  val compatibilityPreferred=remember{java.util.concurrent.atomic.AtomicBoolean()}
  val calls=remember{if(nativeFile(file) || http1Only)http else VideoCallFactory(http,videoHttpClient(true),preferCompatibility=compatibilityPreferred)}
  val sourceFactory=remember{OkHttpDataSource.Factory(calls).setUserAgent("PhotosBeam/${BuildConfig.VERSION_NAME}").setTransferListener(VideoTransferLog())}
+ val replay=remember{if(nativeFile(file))null else VideoReplayBuffer(java.io.File(context.cacheDir,"video-replay"),calls,videoReplayBudget(context.cacheDir))}
+ val replayHeaders=remember{mutableStateOf<Map<String,String>>(emptyMap())}
+ val playbackFactory=remember{if(replay==null)sourceFactory else androidx.media3.datasource.DataSource.Factory{ReplayVideoDataSource(replay,sourceFactory){replayHeaders.value}.also{it.addTransferListener(VideoTransferLog())}}}
  var automaticTrack by remember{mutableStateOf(true)}
  val bestTrack=remember{mutableStateOf<VideoQualityOption?>(null)}
  var suppliedTracks by remember{mutableStateOf<List<VideoQualityOption>>(emptyList())}
@@ -195,7 +198,7 @@ private class ZoomVideoFrame(context:Context,player:Player):FrameLayout(context)
   AppLog.add("Video: preparing progressive playback; processing=${processing.ifBlank{"unspecified"}}; MIME=${file.optString("mimeType")}")
   ExoPlayer.Builder(context,DefaultRenderersFactory(context).setMediaCodecSelector(hardwareFirstDecoderSelector()).setEnableDecoderFallback(true))
    .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(5000,20000,750,1500).setPrioritizeTimeOverSizeThresholds(true).build())
-   .setMediaSourceFactory(DefaultMediaSourceFactory(sourceFactory,streamingExtractors(fastStartup)).setLoadErrorHandlingPolicy(androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy(1))).build()
+   .setMediaSourceFactory(DefaultMediaSourceFactory(playbackFactory,streamingExtractors(fastStartup)).setLoadErrorHandlingPolicy(androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy(1))).build()
  }
  DisposableEffect(player){
   val startTime=android.os.SystemClock.elapsedRealtime()
@@ -267,7 +270,8 @@ private class ZoomVideoFrame(context:Context,player:Player):FrameLayout(context)
    try{
     message=if(nativeFile(file))"Preparing phone video…" else "Resolving Google download…"
     val location=if(nativeFile(file))null else locateVideoSource(mediaUrl(file,"=dv"),token,resolver!!)
-    sourceFactory.setDefaultRequestProperties(location?.headers ?: mapOf("Authorization" to "Bearer $token"))
+    replayHeaders.value=location?.headers ?: mapOf("Authorization" to "Bearer $token")
+    sourceFactory.setDefaultRequestProperties(replayHeaders.value)
     player.setMediaItem(MediaItem.fromUri(location?.url?.toString() ?: mediaUrl(file,"=dv")))
     AppLog.add("Video: player connection ${if(http1Only)"HTTP/1.1 compatibility" else "automatic HTTP/2 or HTTP/1.1"}; hardware-first decoder selection")
     player.prepare()
@@ -275,7 +279,7 @@ private class ZoomVideoFrame(context:Context,player:Player):FrameLayout(context)
    catch(e:Exception){message="Video source failed: ${mediaError(e)}. Retry or use phone media.";AppLog.add(message);failed(message);stateCallback("Source connection failed")}
   }
   val progressJob=playbackScope.launch{while(isActive){position=player.currentPosition.coerceAtLeast(0);duration=player.duration.takeIf{it>0} ?: 0L;delay(if(chromeNow)500 else 2000)}}
-  onDispose{prepareJob.cancel();progressJob.cancel();controlCallback(null);optionsCallback(emptyList());player.removeListener(listener);player.release()}
+  onDispose{prepareJob.cancel();progressJob.cancel();controlCallback(null);optionsCallback(emptyList());player.removeListener(listener);replay?.close();player.release()}
  }
  Box(modifier.background(Color.Black)){
   AndroidView(factory={ZoomVideoFrame(it,player)},update={it.updateViewport(viewport)},modifier=Modifier.fillMaxSize())

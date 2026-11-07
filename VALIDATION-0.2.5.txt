@@ -1,0 +1,21 @@
+PhotosBeam 0.2.5 — single-response buffer for ignored Google video ranges
+
+Evidence from the supplied v0.2.3 log:
+- The 33,100,583-byte MP4 returns HTTP 200 for bytes=33088618- and bytes=44-.
+- First frame occurs after 11,603ms and 10,061ms; HEVC initialization takes
+  319ms and 72ms. Delivery/MP4 metadata seeking dominates decoder startup.
+- Other attempts show HTTP/2 resets and 20s timeouts addressed by v0.2.4 fallback.
+
+Implementation:
+- Share one sequential download across extractor open/close/seek cycles when
+  Google returns the whole file. Disk reads reuse header/media/footer bytes.
+- Real 206 responses keep direct range streaming; phone sources are unchanged.
+- No encoding, resolution/frame-rate conversion or whole-file prerequisite for
+  MP4s whose metadata is at the start. Tail metadata may still require one pass.
+- Private ephemeral file; 1 GiB maximum and 128 MiB free-space reserve; bounded
+  64 KiB worker buffer and 8 MiB read-ahead beyond the furthest requested byte.
+- Delete on video disposal; remove crash leftovers on next app startup.
+
+Validation in progress: compile, local buffer regressions, real TLS ignored-range
+regression, full unit tests, lint, APK builds and signature/package checks.
+Physical Chromecast playback of the user's private Google videos is not available.

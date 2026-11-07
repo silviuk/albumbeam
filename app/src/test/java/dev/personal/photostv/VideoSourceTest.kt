@@ -78,4 +78,16 @@ class VideoSourceTest {
   }finally{release.countDown();source.stop()}
  }
 
+ @Test fun wholeFileTlsServerIsReadOnceForTailMetadataAndBackwardSeek()=runBlocking{
+  val count=java.util.concurrent.atomic.AtomicInteger();val data=ByteArray(128*1024){(it%251).toByte()}
+  val source=server{s->count.incrementAndGet();assertEquals("bytes=0-",s.headers["range"]);NanoHTTPD.newFixedLengthResponse(NanoHTTPD.Response.Status.OK,"video/mp4",java.io.ByteArrayInputStream(data),data.size.toLong())}
+  val directory=java.nio.file.Files.createTempDirectory("video-replay-tls").toFile()
+  val replay=VideoReplayBuffer(directory,client(),1024L*1024)
+  try{
+   assertTrue(replay.open("https://127.0.0.1:${source.listeningPort}/video",emptyMap()))
+   val bytes=ByteArray(32);assertEquals(32,replay.read(data.size-32L,bytes,0,32));assertArrayEquals(data.takeLast(32).toByteArray(),bytes)
+   assertTrue(replay.open("https://127.0.0.1:${source.listeningPort}/video",emptyMap()));assertEquals(32,replay.read(44,bytes,0,32));assertArrayEquals(data.copyOfRange(44,76),bytes);assertEquals(1,count.get())
+  }finally{replay.close();assertTrue(directory.listFiles().isNullOrEmpty());directory.deleteRecursively();source.stop()}
+ }
+
 }
