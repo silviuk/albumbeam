@@ -95,6 +95,8 @@ class MainActivity:ComponentActivity() {
  }}
  private var pickerLink by mutableStateOf("")
  private var pickerOnComputer=false
+ private var pickerInEdge=false
+ private var edgeUnavailable by mutableStateOf(false)
  private var desktopDialog by mutableStateOf(false)
  private var authorizationBusy by mutableStateOf(false)
  private var selectionStep by mutableStateOf("")
@@ -252,9 +254,9 @@ class MainActivity:ComponentActivity() {
    }
   }catch(e:Exception){status=e.message ?: "Pairing unavailable"}
  }
- fun authorize(refresh:Boolean=false,computer:Boolean=false) {
+ fun authorize(refresh:Boolean=false,computer:Boolean=false,edge:Boolean=false) {
   if(authorizationBusy)return
-  pickerOnComputer=computer
+  pickerOnComputer=computer;pickerInEdge=edge
   if(computer){desktopDialog=true;pickerLink=""}
   selectionError="";selectionStep="Requesting Google Photos permission…"
   if(connection==null){selectionFailure("Pair PhotosBeam with your TV before creating a selection link.");return}
@@ -285,11 +287,39 @@ class MainActivity:ComponentActivity() {
     stopService(NativeSharing.intent(this@MainActivity))
     status=if(pickerOnComputer) "Selection link ready. Open it on your computer using the same Google account." else "Connected. Select your photos and videos in Google Photos, then finish."
     selectionStep="Ready — copy or share the link below"
-    if(!renew && !pickerOnComputer)startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(pickerLink)))
+    if(!renew && !pickerOnComputer)openSelection(pickerInEdge)
    }catch(e:CancellationException){throw e}
    catch(e:Exception){selectionFailure("Could not prepare selection: "+(e.message ?: e.javaClass.simpleName),e.javaClass.simpleName)}
    finally{token="";authorizationBusy=false}
   }
+ }
+ private fun openSelection(edge:Boolean){
+  try{
+   startActivity(pickerBrowserIntent(pickerLink,edge))
+   AppLog.add(if(edge)"Phone: opened Google selection in Edge; system browser defaults unchanged" else "Phone: opened Google selection with the default handler")
+  }catch(e:android.content.ActivityNotFoundException){
+   if(edge){edgeUnavailable=true;status="Edge is not available in this phone profile. Install Edge or use the default app."}
+   else status="No app could open this selection link. Install a browser and try again."
+   AppLog.add("Phone: selection browser unavailable (${if(edge)"Edge" else "default"})")
+  }catch(e:SecurityException){
+   if(edge)edgeUnavailable=true
+   status="This phone's policy prevented opening the selection browser."
+   AppLog.add("Phone: selection browser blocked by device policy")
+  }
+ }
+ private fun installEdge(){
+  try{startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("market://details?id=com.microsoft.emmx")))}
+  catch(e:android.content.ActivityNotFoundException){
+   try{startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://play.google.com/store/apps/details?id=com.microsoft.emmx")))}
+   catch(e:Exception){status="Open Google Play and search for Microsoft Edge."}
+  }catch(e:SecurityException){status="This phone's policy prevented opening Google Play."}
+ }
+ @Composable fun EdgeUnavailableDialog(){
+  if(!edgeUnavailable)return
+  AlertDialog(onDismissRequest={edgeUnavailable=false},title={Text("Open selection in Edge")},
+   text={Column{Text("Microsoft Edge could not open the selection in this phone profile. Install or enable Edge, then try again. Your default browser stays unchanged.");TextButton(onClick={installEdge()}){Text("Get Edge")}}},
+   confirmButton={TextButton(onClick={edgeUnavailable=false;openSelection(true)}){Text("Try Edge again")}},
+   dismissButton={Row{TextButton(onClick={edgeUnavailable=false;openSelection(false)}){Text("Use default app")};TextButton(onClick={edgeUnavailable=false}){Text("Close")}}})
  }
  @Composable fun DesktopSelectionDialog(){
   if(!desktopDialog)return
@@ -312,7 +342,8 @@ class MainActivity:ComponentActivity() {
      Text("3. Search your album name, choose items using Google's picker, and finish. The TV will load them.")
      Text("PhotosBeam cannot open a browser on your computer automatically. This link expires when you finish or the session expires.")
      Text(selectionStep)
-     Action("Open on this phone instead"){desktopDialog=false;startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(pickerLink)))}
+     Action("Open in Edge on this phone"){desktopDialog=false;openSelection(true)}
+     Action("Open on this phone instead"){desktopDialog=false;openSelection(false)}
     }
     if(!authorizationBusy)Action("Close"){desktopDialog=false}
    }}
@@ -375,6 +406,7 @@ class MainActivity:ComponentActivity() {
  @OptIn(ExperimentalMaterial3Api::class)
  @Composable fun Phone() {
   DesktopSelectionDialog()
+  EdgeUnavailableDialog()
   var tab by rememberSaveable{mutableIntStateOf(0)}
   var manual by remember{mutableStateOf(false)}
   if(manual)ManualPairing{manual=false}
@@ -414,6 +446,8 @@ class MainActivity:ComponentActivity() {
          Text("Google Photos",style=MaterialTheme.typography.titleLarge)
          Text("The TV fetches selected media directly from Google. Choose on your phone or share a selection link to your computer.")
          Button(enabled=connection!=null && !authorizationBusy,onClick={authorize()}){Text("Choose in Google Photos")}
+         OutlinedButton(enabled=connection!=null && !authorizationBusy,onClick={authorize(edge=true)}){Text("Choose in Edge")}
+         Text("Choose in Edge opens this selection in Microsoft Edge without changing your default browser.",style=MaterialTheme.typography.bodySmall)
          OutlinedButton(enabled=connection!=null && !authorizationBusy,onClick={authorize(computer=true)}){Text("Choose on computer")}
          if(authorizationBusy){LinearProgressIndicator(Modifier.fillMaxWidth());Text(selectionStep)}
         }}

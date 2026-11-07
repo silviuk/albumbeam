@@ -1,0 +1,17 @@
+PhotosBeam 0.2.6 — choose Google Photos through Edge on Android
+
+- Optional Choose in Edge creates the existing Picker session, sends it to the
+  paired TV, and limits the selection VIEW intent to the stable Edge package.
+- Default selection and desktop flows remain available; the desktop-link dialog
+  can also open the existing selection in Edge on this phone.
+- Missing/disabled or policy-blocked Edge gives an explicit recovery dialog with
+  install, retry, default-app and dismiss actions. No silent default-app fallback.
+- HTTPS selection URLs only; diagnostics exclude picker URLs and credentials.
+- No new dependencies, manifest permissions, package-visibility queries or settings
+  changes. TV playback, pairing storage, signing identity and OAuth stay unchanged.
+- The bulk-selection browser extension is not part of this release.
+
+Validation pending: compilation, existing unit suites, lint, APK packaging and
+signer checks. Instrumentation intent tests check Edge package targeting, default
+package neutrality, browser category and rejection of executable/cleartext links.
+Physical Edge launching/installation and Google redirect behavior require a phone.

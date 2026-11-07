@@ -386,3 +386,21 @@ transfer buffer. Network/disk failure falls back to the normal retry path.
 Buffer files are deleted when playback is left/replaced/ended. Files left by a
 process kill are removed at app startup. Tokens and signed URLs stay in memory.
 Phone-provided media streaming and v0.2.4 resolution/codec controls are unchanged.
+
+Open Google Photos in Edge in v0.2.6
+Phone > Photos > Google Photos > Choose in Edge creates the usual Google Picker
+session and opens its selection URL specifically in Microsoft Edge (stable).
+The ordinary Choose in Google Photos and Choose on computer paths remain available.
+The computer-link dialog also offers Open in Edge on this phone.
+
+Only that selection launch is directed to Edge; Android's default browser stays
+unchanged. Edge must be installed and enabled in the same phone profile. If it
+cannot open, PhotosBeam offers Get Edge, Try Edge again, Use default app and Close.
+It does not silently send an Edge selection to another app. The same selection
+link can be retried without making a new session while it remains valid.
+
+This release adds browser routing only. It does not include the proposed bulk
+selection extension or add controls to Google's Picker. Edge/Google may offer to
+open another app after the initial launch; remain in the browser for webpage tools.
+Google authorization still uses the existing Android authorization flow. No new
+Google Cloud configuration, package IDs, permissions or signing keys are required.
