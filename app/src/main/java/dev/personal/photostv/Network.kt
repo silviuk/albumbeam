@@ -138,8 +138,13 @@ fun validateSelection(payload:JSONObject){
    val uri=java.net.URI(file.getString("baseUrl"))
    require(uri.scheme in listOf("https","http") && privateLanHost(uri.host.orEmpty()) && uri.port in 1..65535 && uri.rawUserInfo==null && uri.rawQuery==null && uri.rawFragment==null)
    require(uri.path.matches(Regex("/media/[0-9]+")))
+   if(file.has("thumbnailUrl"))validateNativeCompanionUrl(file.getString("thumbnailUrl"),file,"/thumb/[0-9]+")
    val next="${uri.scheme}://${uri.host}:${uri.port}/${file.getString("nativePin")}"
    if(i==0)origin=next else require(next==origin)
+  }
+  payload.optJSONObject("cameraCatalog")?.let{catalog->
+   validateNativeCompanionUrl(catalog.getString("baseUrl"),items.getJSONObject(0).getJSONObject("mediaFile"),"/catalog")
+   require(catalog.getInt("total")>=items.length() && catalog.getInt("nextOffset")==items.length())
   }
  }else if(payload.optString("source")=="web"){
   require(id.startsWith("web:"))

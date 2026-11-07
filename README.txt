@@ -1,5 +1,39 @@
 PhotosBeam — personal photo and video viewer for Android TV
 
+Version 0.3.0: one-tap local camera timeline.
+Install both new APKs over the existing apps. Open both apps, wait for saved
+pairing to reconnect, then on the phone choose Start / refresh camera feed.
+Grant All photos and videos for the full feed; limited/image-only/video-only
+access includes only permitted camera items. This optional feature asks for
+Android media-library access; the existing pickers still work independently.
+Camera feed needs no Google sign-in or Cloud configuration.
+
+The feed includes indexed local DCIM/Camera files (including subfolders and
+external-storage camera media), sorted by capture date newest first, falling
+back to added date. It is a snapshot: tap Start / refresh again for new recordings.
+Cloud-only Google Photos items, screenshots and other local folders are excluded;
+Choose files on phone and the existing pickers remain available for those sources.
+Keep the phone connected; the foreground notification and Stop sharing revoke
+media access. Sharing is never started automatically after reboot.
+
+On the TV: D-pad browses and OK opens originals. Date headings, Dates / select day,
+photo/video filters, Select items, Select loaded, Clear selection and View selected
+support browsing and slideshows. Date selection and filters apply to loaded items;
+Load older fetches another 100 entries, and normal scrolling near the end loads
+more. This local timeline has no Google Picker 2,000-item limit. Changing a filter
+keeps existing selections; View selected respects the current filter.
+
+Thumbnails are bounded previews with a bounded phone memory cache. Opened photos
+and videos use original media-format file bytes, with PhotosBeam transcoding and
+resizing disabled on the phone. Native camera photos always render at the bounded
+full-size-file/TV setting (up to 4K), rather than the optional 1080p setting. Photo
+zoom magnifies that bounded decode. Video preserves the original codec/resolution/
+frame rate/HDR; unsupported originals produce a playback error, not a hidden
+lower-quality conversion. Actual display/decoder limits and network speed still
+apply. Android may redact location metadata according to its permissions; no
+extra location access is requested. Quality shows source size and decoded details.
+
+
 Version 0.2.8: Edge selection helper + streaming-only Google playback by default.
 Helper setup: https://github.com/silviuk/albumbeam/tree/main/edge-helper
 Android Edge: install Tampermonkey, then our userscript; use Choose in Edge.

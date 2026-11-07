@@ -24,7 +24,7 @@ data class ByteRange(val start:Long,val end:Long){
   }
  }
 }
-class NativeMediaServer(private val context:Context,private val uris:List<Uri>,private val encrypted:Boolean=true):NanoHTTPD(0){
+class NativeMediaServer(private val context:Context,private val uris:List<Uri>,private val encrypted:Boolean=true,private val camera:List<CameraEntry>?=null):NanoHTTPD(0){
  private val device=DeviceIdentity.create()
  private val grant=secret()
  private val pin=fingerprint(device.held.certificate.encoded)
@@ -33,25 +33,60 @@ class NativeMediaServer(private val context:Context,private val uris:List<Uri>,p
   val ssl=SSLContext.getInstance("TLS").apply{init(arrayOf(manager),null,SecureRandom())}
   if(encrypted)makeSecure(ssl.serverSocketFactory,arrayOf("TLSv1.2"))
  }
+ private fun origin(host:String)="${if(encrypted)"https" else "http"}://$host:$listeningPort"
+ @Volatile private var servingHost=""
+ private fun mediaItem(index:Int):JSONObject {
+  val uri=uris[index];val entry=camera?.get(index)
+  val mime=entry?.mime ?: (context.contentResolver.getType(uri) ?: java.net.URLConnection.guessContentTypeFromName(uri.lastPathSegment)).orEmpty()
+  require(mime.startsWith("image/") || mime.startsWith("video/")){"Unsupported selected media type"}
+  val metadata=JSONObject()
+  if(entry!=null)metadata.put("width",entry.width).put("height",entry.height)
+  else runCatching{context.contentResolver.query(uri,arrayOf("width","height"),null,null,null)?.use{cursor->if(cursor.moveToFirst()){
+   for(column in listOf("width","height")){val i=cursor.getColumnIndex(column);if(i>=0 && !cursor.isNull(i))metadata.put(column,cursor.getInt(i))}
+  }}}
+  val file=JSONObject().put("baseUrl","${origin(servingHost)}/media/$index").put("nativePin",pin).put("mimeType",mime).put("mediaFileMetadata",metadata)
+  if(entry!=null)file.put("thumbnailUrl","${origin(servingHost)}/thumb/$index").put("originalBytes",entry.bytes).put("originalDurationMs",entry.duration)
+  return JSONObject().put("id",index.toString()).put("type",if(mime.startsWith("video/"))"VIDEO" else "PHOTO").put("taken",entry?.taken ?: 0).put("mediaFile",file)
+ }
+ private fun page(offset:Int,limit:Int):JSONObject {
+  val bounds=catalogPageBounds(offset,limit,uris.size);val list=JSONArray();for(index in bounds)list.put(mediaItem(index))
+  val end=offset+list.length()
+  return JSONObject().put("items",list).put("nextOffset",end).put("total",uris.size)
+ }
  fun selection(host:String=NetworkInterface.getNetworkInterfaces().toList().flatMap{it.inetAddresses.toList()}.firstOrNull{it is Inet4Address && it.isSiteLocalAddress}?.hostAddress ?: error("Connect the phone to your home network")):JSONObject {
-  val list=JSONArray()
-  uris.forEachIndexed{index,uri->
-   val mime=(context.contentResolver.getType(uri) ?: java.net.URLConnection.guessContentTypeFromName(uri.lastPathSegment)).orEmpty()
-   require(mime.startsWith("image/") || mime.startsWith("video/")){"Unsupported selected media type"}
-   val metadata=JSONObject()
-   // Optional provider metadata. No full library access is requested.
-   runCatching{context.contentResolver.query(uri,arrayOf("width","height"),null,null,null)?.use{cursor->if(cursor.moveToFirst()){
-    for(column in listOf("width","height")){val i=cursor.getColumnIndex(column);if(i>=0 && !cursor.isNull(i))metadata.put(column,cursor.getInt(i))}
-   }}}
-   list.put(JSONObject().put("id",index.toString()).put("type",if(mime.startsWith("video/"))"VIDEO" else "PHOTO")
-    .put("mediaFile",JSONObject().put("baseUrl","${if(encrypted)"https" else "http"}://$host:$listeningPort/media/$index").put("nativePin",pin).put("mimeType",mime).put("mediaFileMetadata",metadata)))
-  }
-  return JSONObject().put("requestId",java.util.UUID.randomUUID().toString()).put("session","native:"+secret()).put("token",grant).put("source","native").put("items",list)
+  servingHost=host
+  val list=if(camera!=null)page(0,100).getJSONArray("items") else JSONArray().apply{uris.indices.forEach{put(mediaItem(it))}}
+  val result=JSONObject().put("requestId",java.util.UUID.randomUUID().toString()).put("session","native:"+secret()).put("token",grant).put("source","native").put("items",list)
+  if(camera!=null)result.put("cameraCatalog",JSONObject().put("baseUrl","${origin(host)}/catalog").put("total",uris.size).put("nextOffset",list.length()))
+  return result
+ }
+ private val thumbnails=object:android.util.LruCache<Int,ByteArray>(8*1024*1024){override fun sizeOf(key:Int,value:ByteArray)=value.size}
+ private val thumbnailSlots=java.util.concurrent.Semaphore(2)
+ @Suppress("DEPRECATION") private fun thumbnail(index:Int):Response {
+  thumbnails.get(index)?.let{return newFixedLengthResponse(Response.Status.OK,"image/jpeg",it.inputStream(),it.size.toLong()).apply{addHeader("Cache-Control","no-store")}}
+  if(!thumbnailSlots.tryAcquire(8,java.util.concurrent.TimeUnit.SECONDS))return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE,"text/plain","Busy; retry")
+  try{
+   val entry=camera?.getOrNull(index) ?: return newFixedLengthResponse(Response.Status.NOT_FOUND,"text/plain","")
+   val bitmap=if(android.os.Build.VERSION.SDK_INT>=29)context.contentResolver.loadThumbnail(entry.uri,android.util.Size(480,320),null)
+    else if(entry.mime.startsWith("video/"))android.provider.MediaStore.Video.Thumbnails.getThumbnail(context.contentResolver,android.content.ContentUris.parseId(entry.uri),android.provider.MediaStore.Video.Thumbnails.MINI_KIND,null)
+    else android.provider.MediaStore.Images.Thumbnails.getThumbnail(context.contentResolver,android.content.ContentUris.parseId(entry.uri),android.provider.MediaStore.Images.Thumbnails.MINI_KIND,null)
+   if(bitmap==null)return newFixedLengthResponse(Response.Status.NOT_FOUND,"text/plain","")
+   val data=try{java.io.ByteArrayOutputStream().use{out->bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG,82,out);out.toByteArray()}}finally{bitmap.recycle()}
+   thumbnails.put(index,data)
+   return newFixedLengthResponse(Response.Status.OK,"image/jpeg",data.inputStream(),data.size.toLong()).apply{addHeader("Cache-Control","no-store")}
+  }catch(e:Exception){AppLog.add("Phone camera: thumbnail unavailable (${e.javaClass.simpleName})");return newFixedLengthResponse(Response.Status.NOT_FOUND,"text/plain","")}
+  finally{thumbnailSlots.release()}
  }
  override fun serve(session:IHTTPSession):Response {
   if(session.headers["authorization"]!="Bearer $grant")return newFixedLengthResponse(Response.Status.FORBIDDEN,"text/plain","Rejected")
   if(session.uri=="/stop" && session.method==Method.POST){context.stopService(NativeSharing.intent(context));return newFixedLengthResponse("{}")}
   if(session.method!=Method.GET && session.method!=Method.HEAD)return newFixedLengthResponse(Response.Status.METHOD_NOT_ALLOWED,"text/plain","")
+  if(camera!=null && session.uri=="/catalog")return try{
+   val offset=session.parameters["offset"]?.firstOrNull()?.toInt() ?: 0
+   val limit=session.parameters["limit"]?.firstOrNull()?.toInt() ?: 100
+   newFixedLengthResponse(Response.Status.OK,"application/json",page(offset,limit).toString()).apply{addHeader("Cache-Control","no-store")}
+  }catch(e:Exception){newFixedLengthResponse(Response.Status.BAD_REQUEST,"text/plain","Invalid page")}
+  if(camera!=null && session.uri.startsWith("/thumb/") && session.method==Method.GET)return thumbnail(session.uri.removePrefix("/thumb/").toIntOrNull() ?: -1)
   val index=session.uri.removePrefix("/media/").toIntOrNull()
   val uri=if(session.uri.startsWith("/media/") && index!=null)uris.getOrNull(index) else null
   if(uri==null)return newFixedLengthResponse(Response.Status.NOT_FOUND,"text/plain","")
@@ -78,7 +113,7 @@ class NativeMediaServer(private val context:Context,private val uris:List<Uri>,p
 }
 
 /** Started only by an explicit selection while the companion is visible. Never restarted after reboot. */
-data class NativeShareRequest(val uris:List<Uri>,val encrypted:Boolean,val result:CompletableDeferred<JSONObject>)
+data class NativeShareRequest(val uris:List<Uri>,val encrypted:Boolean,val result:CompletableDeferred<JSONObject>,val camera:Boolean=false)
 object NativeSharing {
  @Volatile var pending:NativeShareRequest?=null
  @Volatile var running=false

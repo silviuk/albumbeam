@@ -70,6 +70,8 @@ class MainActivity:ComponentActivity() {
  var status by mutableStateOf("Ready")
  var qr by mutableStateOf<Bitmap?>(null)
  var items by mutableStateOf<List<JSONObject>>(emptyList())
+ private var cameraCatalog by mutableStateOf<JSONObject?>(null)
+ private var catalogBusy by mutableStateOf(false)
  var epoch by mutableIntStateOf(0)
  var token by mutableStateOf("")
  private val pairingStore by lazy{PairingStore(this)}
@@ -137,6 +139,60 @@ class MainActivity:ComponentActivity() {
     status="Sharing ${uris.size} items. Keep the phone connected; cloud items may need downloading by their provider."
    }catch(e:Exception){stopService(NativeSharing.intent(this));throw e}
    finally{NativeSharing.pending=null;nativeBusy=false}
+  }
+ }
+ private fun hasCameraAccess()=cameraPermissions(android.os.Build.VERSION.SDK_INT).any{checkSelfPermission(it)==android.content.pm.PackageManager.PERMISSION_GRANTED}
+ private val cameraAccess=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){
+  if(hasCameraAccess()){if(connection!=null)startCameraFeed()else status="Photo/video access updated. Connect to your TV, then start the camera feed."} else status="Camera feed needs photo/video access. You can change access below or keep using file selection."
+ }
+ private fun requestCameraFeed(){
+  if(connection==null){status="Connect to your TV first";return}
+  if(hasCameraAccess())startCameraFeed()else cameraAccess.launch(cameraPermissions(android.os.Build.VERSION.SDK_INT))
+ }
+ private fun startCameraFeed(){
+  if(nativeBusy)return
+  task{nativeBusy=true
+   try{
+    val c=connection ?: error("Connect to your TV first")
+    val request=NativeShareRequest(emptyList(),encryptMedia,CompletableDeferred(),camera=true)
+    NativeSharing.pending=request;startForegroundService(NativeSharing.intent(this))
+    status="Reading local camera timeline…"
+    val payload=withTimeout(60000){request.result.await()}
+    withContext(Dispatchers.IO){c.post("session",payload)}
+    session="";status="Camera feed shared: ${payload.getJSONObject("cameraCatalog").getInt("total")} items, newest first. Keep this phone connected."
+    AppLog.add("Phone: local camera timeline sent; originals unchanged")
+   }catch(e:Exception){stopService(NativeSharing.intent(this));throw e}
+   finally{NativeSharing.pending=null;nativeBusy=false}
+  }
+ }
+ private fun moreCameraItems(){
+  val catalog=cameraCatalog ?: return
+  if(catalogBusy || items.size>=catalog.optInt("total"))return
+  val activeSession=session;val activeToken=token;val offset=items.size
+  val first=items.firstOrNull()?.getJSONObject("mediaFile") ?: return
+  task{catalogBusy=true
+   try{
+    val response=withContext(Dispatchers.IO){
+     val url=catalog.getString("baseUrl").toHttpUrl().newBuilder().addQueryParameter("offset",offset.toString()).addQueryParameter("limit","100").build()
+     mediaClient(first).newCall(okhttp3.Request.Builder().url(url).header("Authorization","Bearer $activeToken").build()).execute().use{r->
+      require(r.isSuccessful){"Camera feed unavailable. Keep the phone connected and retry."}
+      val body=r.body ?: error("No camera page")
+      require(body.contentLength()<=2*1024*1024){"Camera page too large"}
+      val data=body.byteStream().use{readBounded(it,2*1024*1024)}
+      JSONObject(String(data,Charsets.UTF_8))
+     }
+    }
+    if(session==activeSession && cameraCatalog===catalog && items.size==offset){
+     val batch=response.getJSONArray("items");require(batch.length() in 1..100)
+     val wrapper=JSONObject().put("source","native").put("session",activeSession).put("token",activeToken).put("requestId","camera-page").put("items",batch)
+     validateSelection(wrapper)
+     val incoming=(0 until batch.length()).map{batch.getJSONObject(it)}
+     require(incoming.indices.all{i->incoming[i].getString("id")=="${offset+i}"})
+     incoming.forEach{require(it.getJSONObject("mediaFile").getString("nativePin")==first.getString("nativePin"));validateNativeCompanionUrl(it.getJSONObject("mediaFile").getString("baseUrl"),first,"/media/[0-9]+")}
+     require(response.getInt("total")==catalog.getInt("total") && response.getInt("nextOffset")==offset+batch.length())
+     items=items+incoming;status="Camera feed • ${items.size} of ${catalog.getInt("total")} • Newest first • Originals"
+    }
+   }finally{catalogBusy=false}
   }
  }
  @Suppress("DEPRECATION")
@@ -237,8 +293,8 @@ class MainActivity:ComponentActivity() {
   pairingStore.save("tv",device.json().put("paired",hasSavedPairing))
   server=PairServer(device=device,initiallyPaired=hasSavedPairing,onPaired={pairingStore.save("tv",device.json().put("paired",true));runOnUiThread{hasSavedPairing=true;qr=null;status="Phone paired. Choose media on your phone."}},diagnostic={message -> runOnUiThread{status=message.take(450)}},control={action->runOnUiThread{remoteCommandHandler?.invoke(action)}},viewport={input->runOnUiThread{remoteViewportHandler?.invoke(input)}},state={remoteSummary},nativeSharing={session.startsWith("native:")},selectionId={if(session.startsWith("native:") || session.startsWith("web:"))"" else session}) { j -> runOnUiThread { AppLog.add("TV: received media selection from companion"); val next=j.getString("session"); if(session.isNotBlank() && next!=session) end(false); token=j.getString("token"); session=next; qr=null
    if(j.optString("source") in listOf("native","web")){
-    job?.cancel();val list=j.getJSONArray("items");items=(0 until list.length()).map{list.getJSONObject(it)}
-    require(items.size<=2000);status=if(j.optString("source")=="web")"Browser video • Experimental direct Google stream" else "${items.size} phone/provider items • Keep phone connected";AppLog.add("TV: direct selection loaded (${items.size} items; source=${j.optString("source")})")
+    job?.cancel();cameraCatalog=j.optJSONObject("cameraCatalog");val list=j.getJSONArray("items");items=(0 until list.length()).map{list.getJSONObject(it)}
+    require(items.size<=2000);status=if(cameraCatalog!=null)"Camera feed • ${items.size} of ${cameraCatalog!!.getInt("total")} • Newest first • Originals" else if(j.optString("source")=="web")"Browser video • Experimental direct Google stream" else "${items.size} phone/provider items • Keep phone connected";AppLog.add("TV: direct selection loaded (${items.size} items; source=${j.optString("source")})")
    }else load() } }
   try { server!!.start(); AppLog.add("TV: secure pairing server started; QR valid for five minutes"); val host=localAddress() ?: error("Connect the TV to your home network, then retry.")
    manualDisplay=server!!.manualCode;verificationDisplay=verification(server!!.pin)
@@ -388,7 +444,7 @@ class MainActivity:ComponentActivity() {
  }
  fun end(reset:Boolean=true) {
   job?.cancel(); val oldToken=token; val oldSession=session;val oldNative=items.firstOrNull()?.optJSONObject("mediaFile")?.takeIf{nativeFile(it)}
-  token=""; session=""; items=emptyList(); epoch++
+  token=""; session=""; items=emptyList(); cameraCatalog=null; epoch++
   if(oldToken.isNotBlank() && oldSession.isNotBlank() && !oldSession.startsWith("native:") && !oldSession.startsWith("web:")) lifecycleScope.launch(Dispatchers.IO){runCatching{api(oldToken,"sessions/$oldSession","DELETE")}}
   if(oldNative!=null && oldToken.isNotBlank())lifecycleScope.launch(Dispatchers.IO){runCatching{
    val url=oldNative.getString("baseUrl").toHttpUrl().newBuilder().encodedPath("/stop").build()
@@ -468,6 +524,14 @@ class MainActivity:ComponentActivity() {
       }
       when(tab){
        0->{
+        OutlinedCard(Modifier.fillMaxWidth()){Column(Modifier.padding(20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+         Text("Camera feed",style=MaterialTheme.typography.titleLarge)
+         Text("Browse local DCIM/Camera photos and videos on your TV, newest first. Originals stream directly from this phone without resizing or transcoding. TV thumbnails are smaller previews.")
+         Button(enabled=connection!=null && !nativeBusy,onClick={requestCameraFeed()}){Text(if(nativeBusy)"Preparing…" else "Start / refresh camera feed")}
+         Text("Allow all photos and videos for the full camera timeline. Limited access shows only permitted items. Keep the phone on this network; tap Start again to include new recordings.",style=MaterialTheme.typography.bodySmall)
+         TextButton(enabled=!nativeBusy,onClick={cameraAccess.launch(cameraPermissions(android.os.Build.VERSION.SDK_INT))}){Text("Change photo/video access")}
+         TextButton(onClick={stopService(NativeSharing.intent(this@MainActivity));status="Phone sharing stopped; TV media access revoked"}){Text("Stop sharing")}
+        }}
         if(sharedUris.isNotEmpty())OutlinedCard(Modifier.fillMaxWidth()){Column(Modifier.padding(20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
          Text("${sharedUris.size} items from your gallery",style=MaterialTheme.typography.titleLarge)
          Button(enabled=connection!=null && !nativeBusy && sharedUris.size<=2000,onClick={shareNative(sharedUris)}){Text("Send shared items to TV")}
@@ -583,6 +647,16 @@ class MainActivity:ComponentActivity() {
   }}}
  }
  @Composable fun TV() {
+  var chosen by remember(epoch,session){mutableStateOf<Set<String>>(emptySet())}
+  var choosing by remember(epoch,session){mutableStateOf(false)}
+  var selectionOnly by remember(epoch,session){mutableStateOf(false)}
+  var dateMenu by remember{mutableStateOf(false)}
+  val allItems=this.items
+  var mediaFilter by remember(epoch,session){mutableIntStateOf(0)}
+  val items=remember(allItems,selectionOnly,chosen,mediaFilter){allItems.filter{(!selectionOnly || it.getString("id") in chosen) && (mediaFilter==0 || it.optString("type")==if(mediaFilter==1)"PHOTO" else "VIDEO")}}
+  val gridTiles=remember(items,cameraCatalog!=null){timelineTiles(items,cameraCatalog!=null)}
+  val gridState=rememberLazyGridState()
+  val nearEnd by remember{derivedStateOf{gridState.layoutInfo.totalItemsCount>0 && (gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0)>=gridState.layoutInfo.totalItemsCount-8}}
   var viewport by remember{mutableStateOf(MediaViewport())}
   var zoomMode by remember{mutableStateOf(false)}
   var mediaAspect by remember{mutableFloatStateOf(0f)}
@@ -598,6 +672,9 @@ class MainActivity:ComponentActivity() {
   var fullQr by remember{mutableStateOf(false)}
   var showCode by remember{mutableStateOf(false)}
   var selected by remember { mutableIntStateOf(-1) }; var slideshow by remember { mutableStateOf(false) }; var loaded by remember(selected) { mutableStateOf(false) }; var retryCount by remember { mutableIntStateOf(0) }
+  LaunchedEffect(nearEnd,allItems.size,selected,mediaFilter,selectionOnly){
+   if(nearEnd && selected<0 && !selectionOnly && mediaFilter==0 && cameraCatalog!=null)moreCameraItems()
+  }
   val idleControls=remember{IdleControls()}
   var controlsVisible by remember{mutableStateOf(true)}
   var controlActivity by remember{mutableLongStateOf(0L)}
@@ -713,16 +790,48 @@ class MainActivity:ComponentActivity() {
      }
     }
    }
-   if(selected<0) LazyVerticalGrid(modifier=Modifier.weight(1f),columns=GridCells.Adaptive(180.dp),contentPadding=PaddingValues(12.dp),verticalArrangement=Arrangement.spacedBy(20.dp),horizontalArrangement=Arrangement.spacedBy(20.dp)) {
-    itemsIndexed(items){i,item->androidx.tv.material3.Card(onClick={selected=i}){
-     Column{
-      if(item.optString("type")=="VIDEO" && directFile(item.getJSONObject("mediaFile")))Box(Modifier.fillMaxWidth().height(110.dp).background(Color(0xFF101012)),contentAlignment=Alignment.Center){androidx.tv.material3.Text("▶",style=androidx.tv.material3.MaterialTheme.typography.headlineLarge)}
-      else AsyncImage(ImageRequest.Builder(context).data(mediaUrl(item.getJSONObject("mediaFile"),"=w640-h360")).addHeader("Authorization","Bearer $token").build(),"${if(item.optString("type")=="VIDEO")"Video" else "Photo"} ${i+1}",imageLoader=loader,contentScale=ContentScale.Crop,modifier=Modifier.fillMaxWidth().height(110.dp))
-      androidx.tv.material3.Text("${if(item.optString("type")=="VIDEO")"▶ Video" else "Photo"} ${i+1}",Modifier.padding(12.dp))
+   if(selected<0 && cameraCatalog!=null){
+    Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)){
+     Action(if(choosing)"Done selecting (${chosen.size})" else "Select items"){choosing=!choosing}
+     if(choosing){
+      Action("Select loaded"){chosen=chosen+items.map{it.getString("id")}}
+      Action("Clear selection"){chosen=emptySet();selectionOnly=false}
      }
-    }}
+     if(chosen.isNotEmpty())Action(if(selectionOnly)"Show full timeline" else "View selected (${chosen.size})"){selectionOnly=!selectionOnly;choosing=false}
+     Action("Show: ${listOf("All","Photos","Videos")[mediaFilter]}"){mediaFilter=(mediaFilter+1)%3}
+     Action("Dates / select day"){dateMenu=true}
+     if(allItems.size<cameraCatalog!!.getInt("total"))Action(if(catalogBusy)"Loading…" else "Load older (${allItems.size}/${cameraCatalog!!.getInt("total")})"){moreCameraItems()}
+    }
+    Text("${if(choosing)"OK selects • Done selecting to finish" else "OK opens • D-pad browses"} • Originals • Filters and day selection apply to loaded items",style=MaterialTheme.typography.bodySmall)
+   }
+   if(selected<0) LazyVerticalGrid(state=gridState,modifier=Modifier.weight(1f),columns=GridCells.Adaptive(180.dp),contentPadding=PaddingValues(12.dp),verticalArrangement=Arrangement.spacedBy(20.dp),horizontalArrangement=Arrangement.spacedBy(20.dp)) {
+    itemsIndexed(gridTiles,key={_,tile->if(tile.media==null)"day-${tile.index}" else "media-${tile.media.getString("id")}"},span={_,tile->GridItemSpan(if(tile.media==null)maxLineSpan else 1)}){_,tile->
+     val item=tile.media
+     if(item==null)androidx.tv.material3.Text(timelineLabel(tile.day),Modifier.padding(vertical=4.dp),style=androidx.tv.material3.MaterialTheme.typography.titleMedium)
+     else androidx.tv.material3.Card(onClick={if(choosing){val id=item.getString("id");chosen=if(id in chosen)chosen-id else chosen+id}else selected=tile.index}){
+      Column{
+       val file=item.getJSONObject("mediaFile")
+       if(item.optString("type")=="VIDEO" && directFile(file) && !file.has("thumbnailUrl"))Box(Modifier.fillMaxWidth().height(110.dp).background(Color(0xFF101012)),contentAlignment=Alignment.Center){androidx.tv.material3.Text("▶",style=androidx.tv.material3.MaterialTheme.typography.headlineLarge)}
+       else AsyncImage(ImageRequest.Builder(context).data(file.optString("thumbnailUrl").ifBlank{mediaUrl(file,"=w640-h360")}).addHeader("Authorization","Bearer $token").build(),"${if(item.optString("type")=="VIDEO")"Video" else "Photo"} ${tile.index+1}",imageLoader=loader,contentScale=ContentScale.Crop,modifier=Modifier.fillMaxWidth().height(110.dp))
+       androidx.tv.material3.Text((if(item.getString("id") in chosen)"✓ " else "")+"${if(item.optString("type")=="VIDEO")"▶ Video" else "Photo"} ${tile.index+1}",Modifier.padding(12.dp))
+      }
+     }
+    }
+    if(cameraCatalog!=null && !selectionOnly && allItems.size<cameraCatalog!!.getInt("total"))item(span={GridItemSpan(maxLineSpan)}){Action(if(catalogBusy)"Loading older items…" else "Load older photos & videos"){moreCameraItems()}}
    }
   }
+  if(dateMenu)Dialog(onDismissRequest={dateMenu=false}){Surface(shape=MaterialTheme.shapes.large){Column(Modifier.widthIn(max=600.dp).heightIn(max=500.dp).padding(24.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
+   Text("Loaded dates • newest first",style=MaterialTheme.typography.titleLarge)
+   Text("Select a day among loaded items. Load older items from the timeline for earlier dates.")
+   items.groupBy{timelineDay(it.optLong("taken"))}.forEach{(day,group)->
+    Action("Browse ${timelineLabel(day)} (${group.size})"){
+     val position=gridTiles.indexOfFirst{it.day==day}.coerceAtLeast(0)
+     dateMenu=false;lifecycleScope.launch{gridState.scrollToItem(position)}
+    }
+    Action("Select loaded day (${group.size})"){chosen=chosen+group.map{it.getString("id")};choosing=true;selectionOnly=false;dateMenu=false}
+   }
+   Action("Close"){dateMenu=false}
+  }}}
   items.getOrNull(selected)?.let { item ->
    Dialog(onDismissRequest={backFromViewer()},properties=DialogProperties(usePlatformDefaultWidth=false,decorFitsSystemWindows=false)){
     Box(Modifier.fillMaxSize().background(Color.Black)
@@ -768,7 +877,7 @@ class MainActivity:ComponentActivity() {
      if(item.getString("type")=="VIDEO")key(file.optString("baseUrl"),token,retryCount,fastStartup,http1Only,allowFullFile){
       VideoViewer(file,token,Modifier.fillMaxSize(),fastStartup=fastStartup,http1Only=http1Only,allowFullFile=allowFullFile,viewport=viewport,zoomMode=zoomMode,onAspect={mediaAspect=it;viewport=viewport.bounded(it,displayAspect)},controlsVisible=controlsVisible,onActivity={focus->activity(focus)},onControlReady={videoControl=it},onState={playerState=it},onInfo={qualityInfo=it},onOptions={videoOptions=it},onEnded={if(slideshow)advance()},onInteraction={slideshow=false},onFailure={message->status=message})
      }else key(file.optString("baseUrl"),token,retryCount,photoQuality){
-      PhotoViewer(file,token,loader,Modifier.fillMaxSize(),quality=photoQuality,viewport=viewport,warmth=photoWarmth,onAspect={mediaAspect=it;viewport=viewport.bounded(it,displayAspect)},onInfo={qualityInfo=it},onLoaded={loaded=true},onFailure={status=it})
+      PhotoViewer(file,token,loader,Modifier.fillMaxSize(),quality=if(file.has("originalBytes"))PhotoQuality.SOURCE_FILE else photoQuality,viewport=viewport,warmth=photoWarmth,onAspect={mediaAspect=it;viewport=viewport.bounded(it,displayAspect)},onInfo={qualityInfo=it},onLoaded={loaded=true},onFailure={status=it})
      }
      if(controlsVisible && actionsFocused)Row(Modifier.align(Alignment.TopCenter).padding(top=10.dp).widthIn(max=1040.dp).background(Color.Black.copy(alpha=.72f),androidx.compose.foundation.shape.RoundedCornerShape(16.dp)).horizontalScroll(rememberScrollState()).padding(6.dp),horizontalArrangement=Arrangement.spacedBy(4.dp)){
       ViewerAction("Previous",Modifier.focusRequester(firstControlFocus)){slideshow=false;selected=(selected-1+items.size)%items.size}
@@ -796,6 +905,7 @@ class MainActivity:ComponentActivity() {
       Action("Send TV log to phone"){server?.sendLogToPhone()}
       Action("TV storage settings"){try{startActivity(Intent(android.provider.Settings.ACTION_INTERNAL_STORAGE_SETTINGS))}catch(e:android.content.ActivityNotFoundException){status="Open Android TV Settings > Storage to free space."}}
       Text("Source metadata: ${sourceDimensions(file)} • ${file.optString("mimeType")}")
+      if(file.has("originalBytes"))Text("Local original • ${"%.1f".format(file.optLong("originalBytes")/1048576.0)} MiB • No PhotosBeam resizing or transcoding. Photos are decoded to a bounded display size; video uses the original track.")
       Text(qualityInfo.ifBlank{"Waiting for decoded media details…"})
       if(item.getString("type")=="VIDEO"){
        if(!directFile(file)){
@@ -827,7 +937,7 @@ class MainActivity:ComponentActivity() {
         if(tracks.size==1)Text("This file contains one supported video track. Other resolutions/codecs require another source file; these controls cannot convert it.")
        }else Text("Resolution and codec choices appear after the video's metadata loads. If download headers stall, an independent HTTP/1.1 connection starts automatically.")
       }else{
-       PhotoQuality.entries.forEach{quality->Action((if(photoQuality==quality) "✓ " else "")+quality.label){photoQuality=quality;loaded=false;qualityInfo="";qualityOpen=false}}
+       (if(file.has("originalBytes"))listOf(PhotoQuality.SOURCE_FILE)else PhotoQuality.entries).forEach{quality->Action((if(photoQuality==quality) "✓ " else "")+quality.label){photoQuality=quality;loaded=false;qualityInfo="";qualityOpen=false}}
        Text("Full-size file downloads the image Google provides; display decoding remains bounded to 4K. Metadata may differ from the original upload.")
       }
       Action("Close"){qualityOpen=false}

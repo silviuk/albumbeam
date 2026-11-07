@@ -1,0 +1,19 @@
+PhotosBeam 0.3.0 — local camera timeline
+
+Implemented:
+- Explicit phone Start / refresh camera feed with Android 8+ media permissions,
+  Android 13 granular media access and Android 14 partial-access support.
+- Local MediaStore Images/Video collections, DCIM/Camera only, capture-date-first
+  ordering and added-date fallback. No per-item file reads during catalog setup.
+- Authenticated, pinned native media source with 100-entry catalog pages, strict
+  same-origin catalog/thumbnail validation and bounded response reads.
+- Bounded thumbnail creation and 8 MiB RAM cache; originals remain separate,
+  requested with original media format and served with byte-range support.
+- TV lazy grid, date headings, date browsing, loaded-day/item selection, filters,
+  selected collection and slideshows. Camera photos use full-size-file TV decode.
+- Original video tracks retained without conversion; no 2,000-item timeline cap.
+
+Validation in progress: Kotlin/Compose compile, unit regressions, Android builds/
+lint and Android emulator MediaStore/native HTTP instrumentation. Hardware remote
+focus, Android permission dialogs on a Samsung phone, 4K/HDR playback and large
+real camera libraries require physical device verification.

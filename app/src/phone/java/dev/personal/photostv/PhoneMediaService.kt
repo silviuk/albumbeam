@@ -26,11 +26,14 @@ class PhoneMediaService:Service(){
   preparing=scope.launch{
    var candidate:NativeMediaServer?=null
    try{
-    server?.stop();candidate=NativeMediaServer(this@PhoneMediaService,request.uris,request.encrypted)
+    val entries=if(request.camera)readCameraTimeline(this@PhoneMediaService) else null
+    val uris=entries?.map{it.uri} ?: request.uris
+    require(uris.isNotEmpty()){if(request.camera)"No accessible photos or videos in DCIM/Camera. Check photo/video permissions, or use Choose files on phone." else "No media selected"}
+    ensureActive();server?.stop();candidate=NativeMediaServer(this@PhoneMediaService,uris,request.encrypted,entries)
     ensureActive();server=candidate;candidate.start()
     val payload=candidate.selection();ensureActive();NativeSharing.running=true
     request.result.complete(payload)
-    AppLog.add("Phone: native media sharing started (${request.uris.size} items); ${if(request.encrypted)"HTTPS" else "HTTP"}; bytes unchanged")
+    AppLog.add("Phone: native media sharing started (${uris.size} items); ${if(request.encrypted)"HTTPS" else "HTTP"}; bytes unchanged")
    }catch(e:Exception){candidate?.stop();request.result.completeExceptionally(e);if(e !is CancellationException)stopSelf()}
   }
   return START_NOT_STICKY
