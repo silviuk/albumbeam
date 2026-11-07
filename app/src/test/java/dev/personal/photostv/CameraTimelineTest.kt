@@ -6,6 +6,10 @@ import org.json.JSONArray
 import java.time.ZoneId
 import java.time.Instant
 class CameraTimelineTest {
+ @Test fun previewsAreBoundedAndNeverUpscale(){
+  assertEquals(480 to 320,thumbnailDimensions(600,400));assertEquals(100 to 80,thumbnailDimensions(100,80))
+  val portrait=thumbnailDimensions(3000,4000);assertEquals(320,portrait.second);assertTrue(portrait.first<320)
+ }
  @Test fun cameraFolderExcludesScreenshotsAndOtherApps(){
   for(path in listOf("DCIM/Camera/","DCIM/Camera/sub/","/storage/emulated/0/DCIM/Camera/a.jpg","DCIM/CAMERA/"))assertTrue(cameraFolder(path))
   for(path in listOf("Pictures/","DCIM/Screenshots/","DCIM/CameraElse/","Pictures/Camera/","DCIM/"))assertFalse(cameraFolder(path))

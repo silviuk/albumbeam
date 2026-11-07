@@ -71,3 +71,9 @@ fun readBounded(input:java.io.InputStream,maximum:Int):ByteArray {
  }
  return output.toByteArray()
 }
+
+fun thumbnailDimensions(width:Int,height:Int):Pair<Int,Int>{
+ require(width>0 && height>0)
+ val scale=minOf(1.0,480.0/width,320.0/height)
+ return maxOf(1,(width*scale).toInt()) to maxOf(1,(height*scale).toInt())
+}

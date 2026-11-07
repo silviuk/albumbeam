@@ -71,7 +71,11 @@ class NativeMediaServer(private val context:Context,private val uris:List<Uri>,p
     else if(entry.mime.startsWith("video/"))android.provider.MediaStore.Video.Thumbnails.getThumbnail(context.contentResolver,android.content.ContentUris.parseId(entry.uri),android.provider.MediaStore.Video.Thumbnails.MINI_KIND,null)
     else android.provider.MediaStore.Images.Thumbnails.getThumbnail(context.contentResolver,android.content.ContentUris.parseId(entry.uri),android.provider.MediaStore.Images.Thumbnails.MINI_KIND,null)
    if(bitmap==null)return newFixedLengthResponse(Response.Status.NOT_FOUND,"text/plain","")
-   val data=try{java.io.ByteArrayOutputStream().use{out->bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG,82,out);out.toByteArray()}}finally{bitmap.recycle()}
+   // loadThumbnail's requested size is a hint on some providers. Enforce the
+   // preview bound without ever changing the separate original media stream.
+   val size=thumbnailDimensions(bitmap.width,bitmap.height)
+   val preview=if(size.first!=bitmap.width || size.second!=bitmap.height)android.graphics.Bitmap.createScaledBitmap(bitmap,size.first,size.second,true).also{bitmap.recycle()}else bitmap
+   val data=try{java.io.ByteArrayOutputStream().use{out->preview.compress(android.graphics.Bitmap.CompressFormat.JPEG,82,out);out.toByteArray()}}finally{preview.recycle()}
    thumbnails.put(index,data)
    return newFixedLengthResponse(Response.Status.OK,"image/jpeg",data.inputStream(),data.size.toLong()).apply{addHeader("Cache-Control","no-store")}
   }catch(e:Exception){AppLog.add("Phone camera: thumbnail unavailable (${e.javaClass.simpleName})");return newFixedLengthResponse(Response.Status.NOT_FOUND,"text/plain","")}

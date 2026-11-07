@@ -20,15 +20,16 @@ import org.json.JSONObject
 class CameraFeedTest {
  private val context get()=InstrumentationRegistry.getInstrumentation().targetContext
  private fun get(server:NativeMediaServer,payload:JSONObject,path:String,range:String?=null,auth:Boolean=true):okhttp3.Response {
-  val builder=Request.Builder().url("http://127.0.0.1:${server.listeningPort}$path")
+  val file=payload.getJSONArray("items").getJSONObject(0).getJSONObject("mediaFile")
+  val builder=Request.Builder().url("https://127.0.0.1:${server.listeningPort}$path")
   if(auth)builder.header("Authorization","Bearer ${payload.getString("token")}")
   if(range!=null)builder.header("Range",range)
-  return okhttp3.OkHttpClient().newCall(builder.build()).execute()
+  return mediaClient(file).newCall(builder.build()).execute()
  }
  @Test fun pagesBeyondPickerLimitAndRequiresAuthorization(){
   val file=java.io.File(context.cacheDir,"camera-page-fixture.jpg");file.writeBytes(ByteArray(1024){it.toByte()})
   val entries=(0 until 2105).map{CameraEntry(Uri.fromFile(file),"image/jpeg",2105L-it,640,480,1024,0)}
-  val server=NativeMediaServer(context,entries.map{it.uri},false,entries)
+  val server=NativeMediaServer(context,entries.map{it.uri},true,entries)
   try{server.start();val payload=server.selection("127.0.0.1");validateSelection(payload)
    assertEquals(100,payload.getJSONArray("items").length());assertEquals(2105,payload.getJSONObject("cameraCatalog").getInt("total"))
    get(server,payload,"/catalog?offset=2000&limit=100").use{val page=JSONObject(it.body!!.string());assertEquals(100,page.getJSONArray("items").length());assertEquals("2000",page.getJSONArray("items").getJSONObject(0).getString("id"));assertEquals(2100,page.getInt("nextOffset"))}
@@ -50,7 +51,7 @@ class CameraFeedTest {
    val old=insert("DCIM/Camera/PhotosBeamTests/",1_700_000_000_000);val recent=insert("DCIM/Camera/PhotosBeamTests/",1_800_000_000_000);val excluded=insert("Pictures/PhotosBeamTests/",1_900_000_000_000)
    val entries=readCameraTimeline(context);val oldIndex=entries.indexOfFirst{it.uri==old};val index=entries.indexOfFirst{it.uri==recent}
    assertTrue(index>=0);assertTrue(oldIndex>index);assertFalse(entries.any{it.uri==excluded})
-   val server=NativeMediaServer(context,entries.map{it.uri},false,entries)
+   val server=NativeMediaServer(context,entries.map{it.uri},true,entries)
    try{server.start();val payload=server.selection("127.0.0.1")
     get(server,payload,"/thumb/$index").use{assertEquals(200,it.code);val data=it.body!!.bytes();val thumb=BitmapFactory.decodeByteArray(data,0,data.size);assertNotNull(thumb);assertTrue(thumb.width<=480 && thumb.height<=320);thumb.recycle()}
     get(server,payload,"/media/$index").use{assertEquals(200,it.code);assertArrayEquals(bytes,it.body!!.bytes())}
