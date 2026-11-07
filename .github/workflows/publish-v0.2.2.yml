@@ -1,0 +1,103 @@
+name: Publish AlbumBeam v0.2.2
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/publish-v0.2.2.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: c17d2e8830e41fa1ef3ea152cc4be20f480657e3
+          path: release-input
+          persist-credentials: false
+      - name: Fetch verified base release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download v0.2.0 --repo "$GITHUB_REPOSITORY" --pattern 'albumbeam-*-v0.2.0.apk' --dir release-base
+      - name: Reconstruct exact signed APKs and verify hashes
+        run: |
+          python3 - <<'PY'
+          import hashlib, io, json, pathlib, zipfile
+          root = pathlib.Path("release-input")
+          manifest = json.loads((root / "release-manifest.json").read_text())
+          assert manifest["version"] == "0.2.2"
+          assert manifest["sourceCommit"] == "acfbade3c882197df0338c8f7f98c619a6e11d3c"
+          output = pathlib.Path("release-assets")
+          output.mkdir()
+          for item in manifest["files"]:
+              assert pathlib.Path(item["name"]).name == item["name"]
+              parts = sorted((root / "chunks" / item["kind"]).glob("*.part"))
+              assert len(parts) == item["parts"]
+              transfer = b"".join(p.read_bytes() for p in parts)
+              assert len(transfer) == item["transferSize"]
+              assert hashlib.sha256(transfer).hexdigest() == item["transferSha256"]
+              if item["encoding"] == "raw":
+                  data = transfer
+              else:
+                  assert item["encoding"] == "zip-data-delta"
+                  base = (pathlib.Path("release-base") / item["baseName"]).read_bytes()
+                  assert hashlib.sha256(base).hexdigest() == item["baseSha256"]
+                  with zipfile.ZipFile(io.BytesIO(transfer)) as archive:
+                      delta = json.loads(archive.read("delta.json"))
+                      literal = archive.read("literal.bin")
+                  assert delta["baseSha256"] == item["baseSha256"]
+                  assert delta["targetSha256"] == item["sha256"]
+                  reconstructed = bytearray()
+                  for operation, offset, count in delta["operations"]:
+                      assert operation in ("copy", "add")
+                      source = base if operation == "copy" else literal
+                      assert offset >= 0 and count >= 0 and offset + count <= len(source)
+                      reconstructed.extend(source[offset:offset+count])
+                  data = bytes(reconstructed)
+              assert len(data) == item["size"]
+              assert hashlib.sha256(data).hexdigest() == item["sha256"]
+              (output / item["name"]).write_bytes(data)
+              print("Verified signed file", item["name"], item["sha256"])
+          checksums = "".join(f'{item["sha256"]}  {item["name"]}\n' for item in manifest["files"])
+          assert checksums == (root / "albumbeam-v0.2.2-SHA256SUMS.txt").read_text()
+          (output / "albumbeam-v0.2.2-SHA256SUMS.txt").write_text(checksums)
+          PY
+      - name: Create draft, verify uploads and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create v0.2.2 release-assets/* --repo "$GITHUB_REPOSITORY" \
+            --target acfbade3c882197df0338c8f7f98c619a6e11d3c --draft --title "AlbumBeam v0.2.2" \
+            --notes-file release-input/release-notes.txt
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" > release-list.json
+          release_id="$(python3 -c 'import json; rows=[r for r in json.load(open("release-list.json")) if r["tag_name"]=="v0.2.2"]; assert len(rows)==1; print(rows[0]["id"])')"
+          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" > release-metadata.json
+          python3 - <<'PY'
+          import hashlib, json, pathlib
+          metadata = json.loads(pathlib.Path("release-metadata.json").read_text())
+          assert metadata["tag_name"] == "v0.2.2"
+          assert metadata["target_commitish"] == "acfbade3c882197df0338c8f7f98c619a6e11d3c"
+          assert metadata["draft"] is True
+          expected = {p.name:p for p in pathlib.Path("release-assets").iterdir()}
+          actual = {a["name"]:a for a in metadata["assets"]}
+          assert set(actual) == set(expected)
+          for name, path in expected.items():
+              item = actual[name]
+              assert item["state"] == "uploaded"
+              assert item["size"] == path.stat().st_size
+              assert item["digest"] == "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+          print("Release assets match the locally signed APKs and source")
+          PY
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" -F draft=false --silent
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v0.2.2" --jq .object.sha)" = "acfbade3c882197df0338c8f7f98c619a6e11d3c"
+      - name: Remove temporary transfer branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          current="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/release-staging/v0.2.2-20261107" --jq .object.sha)"
+          if [ "$current" = "c17d2e8830e41fa1ef3ea152cc4be20f480657e3" ]; then
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/release-staging/v0.2.2-20261107"
+          fi
