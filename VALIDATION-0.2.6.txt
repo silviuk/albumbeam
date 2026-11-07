@@ -11,7 +11,17 @@ PhotosBeam 0.2.6 — choose Google Photos through Edge on Android
   changes. TV playback, pairing storage, signing identity and OAuth stay unchanged.
 - The bulk-selection browser extension is not part of this release.
 
-Validation pending: compilation, existing unit suites, lint, APK packaging and
-signer checks. Instrumentation intent tests check Edge package targeting, default
-package neutrality, browser category and rejection of executable/cleartext links.
-Physical Edge launching/installation and Google redirect behavior require a phone.
+Validation completed:
+- Kotlin/Compose and instrumentation source compilation pass locally.
+- Existing 65 non-network unit tests pass locally.
+- Both app builds, full unit suites, phone/TV lint and both instrumentation APK
+  builds pass in CI: https://github.com/silviuk/albumbeam/actions/runs/42407843184
+- Original signing certificate, package IDs, PhotosBeam version 0.2.6 (17),
+  unchanged dependency classes, preserved existing resource IDs and 16 KiB
+  alignment verified for both signed APKs.
+- Intent checks compile for Edge package targeting, default package neutrality,
+  browser category and rejection of executable/cleartext selection links.
+
+Not run: physical Edge launching/installation, device instrumentation tests or
+Google's subsequent redirect/app-opening behavior. The initial launch targets
+Edge; that browser can offer to open another app during later navigation.
