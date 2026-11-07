@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">PhotosBeam</string>
+    <color name="photosbeam_background">#0B171C</color>
+</resources>

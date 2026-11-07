@@ -178,7 +178,7 @@ private class ZoomVideoFrame(context:Context,player:Player):FrameLayout(context)
  }
  val hardwareMimes=remember{hardwareVideoMimes()}
  val http=remember{mediaClient(file,http1Only)}
- val sourceFactory=remember{OkHttpDataSource.Factory(http).setUserAgent("AlbumBeam/${BuildConfig.VERSION_NAME}")}
+ val sourceFactory=remember{OkHttpDataSource.Factory(http).setUserAgent("PhotosBeam/${BuildConfig.VERSION_NAME}")}
  val resolver=remember{if(nativeFile(file))null else videoHttpClient(http1Only).newBuilder().followRedirects(false).readTimeout(10,TimeUnit.SECONDS).build()}
  val player=remember{
   AppLog.add("Video: preparing progressive playback; processing=${processing.ifBlank{"unspecified"}}; MIME=${file.optString("mimeType")}")
@@ -207,7 +207,7 @@ private class ZoomVideoFrame(context:Context,player:Player):FrameLayout(context)
     message=if(state==Player.STATE_BUFFERING) "Buffering video…" else ""
     if(state==Player.STATE_ENDED)ended()
    }
-   override fun onVideoSizeChanged(size:VideoSize){if(size.height>0)aspectCallback(size.width*size.pixelWidthHeightRatio/size.height);decoded="Decoded video: ${size.width}x${size.height}";AppLog.add("Video decoded ${size.width}x${size.height}; pixel ratio ${size.pixelWidthHeightRatio}");infoCallback("${if(nativeFile(file)) "Phone/provider media (no AlbumBeam transcode)" else "Google-provided transcode"}\n$decoded\n$trackInfo\n$decoderInfo\nPreferred hardware codecs: ${hardwareMimes.joinToString().ifBlank{"none reported"}}\n$outputInfo")}
+   override fun onVideoSizeChanged(size:VideoSize){if(size.height>0)aspectCallback(size.width*size.pixelWidthHeightRatio/size.height);decoded="Decoded video: ${size.width}x${size.height}";AppLog.add("Video decoded ${size.width}x${size.height}; pixel ratio ${size.pixelWidthHeightRatio}");infoCallback("${if(nativeFile(file)) "Phone/provider media (no PhotosBeam transcode)" else "Google-provided transcode"}\n$decoded\n$trackInfo\n$decoderInfo\nPreferred hardware codecs: ${hardwareMimes.joinToString().ifBlank{"none reported"}}\n$outputInfo")}
    override fun onTracksChanged(tracks:Tracks){
     val choices=mutableListOf<VideoQualityOption>()
     val supported=mutableListOf<Triple<Tracks.Group,Int,Format>>()
@@ -233,7 +233,7 @@ private class ZoomVideoFrame(context:Context,player:Player):FrameLayout(context)
      if(group.type==C.TRACK_TYPE_VIDEO)trackInfo="Delivered track: ${f.width}x${f.height} • ${f.sampleMimeType} • "+(if(f.bitrate>0) "${"%.1f".format(f.bitrate/1_000_000.0)} Mbps" else "bitrate unknown")+(if(f.frameRate>0) " • ${f.frameRate} fps" else " • frame rate not reported")
 
     }
-    infoCallback("${if(nativeFile(file)) "Phone/provider media (no AlbumBeam transcode)" else "Google-provided transcode"}\n$decoded\n$trackInfo\n$decoderInfo\nPreferred hardware codecs: ${hardwareMimes.joinToString().ifBlank{"none reported"}}\n$outputInfo")
+    infoCallback("${if(nativeFile(file)) "Phone/provider media (no PhotosBeam transcode)" else "Google-provided transcode"}\n$decoded\n$trackInfo\n$decoderInfo\nPreferred hardware codecs: ${hardwareMimes.joinToString().ifBlank{"none reported"}}\n$outputInfo")
    }
    override fun onPlayWhenReadyChanged(ready:Boolean,reason:Int){stateCallback(if(!ready) "Paused" else if(player.playbackState==Player.STATE_READY) "Playing" else "Buffering");if(reason==Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)interacted()}
    override fun onPositionDiscontinuity(oldPosition:Player.PositionInfo,newPosition:Player.PositionInfo,reason:Int){if(reason==Player.DISCONTINUITY_REASON_SEEK)interacted()}

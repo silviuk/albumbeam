@@ -109,9 +109,9 @@ class Connection(val link:Link) {
   try { auth=post(if(manualCode==null) "pair" else "manual-pair",JSONObject().put("code",manualCode ?: link.code)).getString("auth"); AppLog.add("Phone: pairing accepted") }
   catch(e:java.io.IOException){
    val detail=when(e){
-    is javax.net.ssl.SSLException -> "Secure pairing failed. Update AlbumBeam on the TV, choose End / Pair again, and rescan."
+    is javax.net.ssl.SSLException -> "Secure pairing failed. Update PhotosBeam on the TV, choose End / Pair again, and rescan."
     is java.net.SocketTimeoutException -> "TV did not respond. Check both devices are on the same home network."
-    is java.net.ConnectException -> "Cannot reach TV. Keep AlbumBeam open on the TV and scan a fresh QR."
+    is java.net.ConnectException -> "Cannot reach TV. Keep PhotosBeam open on the TV and scan a fresh QR."
     else -> "TV connection closed. Update the TV app and scan a fresh QR."
    }
    throw java.io.IOException(detail+"\nPhone TLS details: "+tlsDetails(e),e)

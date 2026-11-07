@@ -17,7 +17,7 @@ class PhoneMediaService:Service(){
   manager.createNotificationChannel(NotificationChannel("media-sharing","TV media sharing",NotificationManager.IMPORTANCE_LOW))
   val stop=PendingIntent.getService(this,2,Intent(this,PhoneMediaService::class.java).setAction("stop"),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
   val open=PendingIntent.getActivity(this,1,Intent(this,MainActivity::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-  val notification=Notification.Builder(this,"media-sharing").setSmallIcon(dev.personal.photostv.R.drawable.ic_albumbeam).setContentTitle("AlbumBeam is sharing with your TV")
+  val notification=Notification.Builder(this,"media-sharing").setSmallIcon(dev.personal.photostv.R.drawable.ic_albumbeam).setContentTitle("PhotosBeam is sharing with your TV")
    .setContentText("Keep this phone connected. Tap Stop to end media access.").setContentIntent(open).setOngoing(true).addAction(Notification.Action.Builder(null,"Stop",stop).build()).build()
   if(android.os.Build.VERSION.SDK_INT>=29)startForeground(10,notification,android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE) else startForeground(10,notification)
   val request=NativeSharing.pending;NativeSharing.pending=null

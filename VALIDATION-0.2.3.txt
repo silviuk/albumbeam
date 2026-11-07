@@ -1,0 +1,14 @@
+PhotosBeam 0.2.3 — displayed-name and icon update
+
+Changes:
+- Display name PhotosBeam on both apps, notifications, logs and nearby TV names.
+- New native vector photo-to-TV emblem and a TV banner with an outlined wordmark.
+- Separate adaptive foreground/background and Android 13+ monochrome icon layers.
+- Version 0.2.3 (14). Package IDs, signing key, persistence keys, pairing protocol,
+  Google scopes and dependencies remain unchanged. Install over existing apps.
+- Existing Google Cloud project and Android OAuth client remain valid with the
+  original package/SHA-1 pair. Consent-screen branding can be changed separately.
+
+Validation in progress: source builds, existing tests, lint, SDK packaging and
+signer/resource/package checks. Physical launcher/themed-icon review on the user's
+phone/Chromecast remains a device check; this host has no attached Android device.

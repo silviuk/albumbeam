@@ -142,7 +142,7 @@ class MainActivity:ComponentActivity() {
   if(incoming?.action==Intent.ACTION_SEND_MULTIPLE)incoming.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)?.let{found+=it}
   incoming?.clipData?.let{clip->for(i in 0 until clip.itemCount)clip.getItemAt(i).uri?.let{found+=it}}
   sharedUris=found.filter{it.scheme=="content"}.distinct().take(2001)
-  status=if(sharedUris.isEmpty())"The gallery shared a link rather than media files. Download the files first, then share them or choose files in AlbumBeam." else "${sharedUris.size} gallery items ready. Connect to your TV, then send them below."
+  status=if(sharedUris.isEmpty())"The gallery shared a link rather than media files. Download the files first, then share them or choose files in PhotosBeam." else "${sharedUris.size} gallery items ready. Connect to your TV, then send them below."
  }
  override fun onNewIntent(intent:Intent){super.onNewIntent(intent);setIntent(intent);receiveSharedMedia(intent)}
  private fun restorePairing(){
@@ -160,7 +160,7 @@ class MainActivity:ComponentActivity() {
      val ok=withContext(Dispatchers.IO){runCatching{c.post("log-inbox",JSONObject());true}.getOrDefault(false)}
      if(ok){connected(c);status="Reconnected to your TV";AppLog.add("Phone: saved pairing authenticated");break}
     }
-    if(connection==null){status="Saved TV offline. Open AlbumBeam on your TV; reconnecting automatically…";delay(5000)}
+    if(connection==null){status="Saved TV offline. Open PhotosBeam on your TV; reconnecting automatically…";delay(5000)}
    }
   }
  }
@@ -234,7 +234,7 @@ class MainActivity:ComponentActivity() {
    runCatching{nearby.advertise(server!!.listeningPort,server!!.pin)}.onFailure{AppLog.add("TV: discovery unavailable; QR still works")}
    val matrix=MultiFormatWriter().encode(server!!.link(host).json(),BarcodeFormat.QR_CODE,600,600)
    qr=Bitmap.createBitmap(600,600,Bitmap.Config.ARGB_8888).apply { for(x in 0..599) for(y in 0..599) setPixel(x,y,if(matrix[x,y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE) }
-   if(hasSavedPairing){qr=null;status="Paired phone remembered. Open AlbumBeam on your phone to reconnect."}else status="Scan using the AlbumBeam Companion. QR expires in five minutes."
+   if(hasSavedPairing){qr=null;status="Paired phone remembered. Open PhotosBeam on your phone to reconnect."}else status="Scan using the PhotosBeam Companion. QR expires in five minutes."
    val checking=server!!
    task {
     AppLog.add("TV: starting loopback TLS self-test")
@@ -256,7 +256,7 @@ class MainActivity:ComponentActivity() {
   pickerOnComputer=computer
   if(computer){desktopDialog=true;pickerLink=""}
   selectionError="";selectionStep="Requesting Google Photos permission…"
-  if(connection==null){selectionFailure("Pair AlbumBeam with your TV before creating a selection link.");return}
+  if(connection==null){selectionFailure("Pair PhotosBeam with your TV before creating a selection link.");return}
   if(refresh && session.isBlank()){selectionFailure("Select photos first.");return}
   authorizationBusy=true
   AppLog.add(if(refresh) "Phone: requesting renewed Google authorization" else "Phone: requesting Google Photos permission")
@@ -309,7 +309,7 @@ class MainActivity:ComponentActivity() {
      Action("Share link to computer"){startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT,pickerLink),"Send selection link to your computer"))}
      Text("2. Open it in a computer browser signed in to the same Google account.")
      Text("3. Search your album name, choose items using Google's picker, and finish. The TV will load them.")
-     Text("AlbumBeam cannot open a browser on your computer automatically. This link expires when you finish or the session expires.")
+     Text("PhotosBeam cannot open a browser on your computer automatically. This link expires when you finish or the session expires.")
      Text(selectionStep)
      Action("Open on this phone instead"){desktopDialog=false;startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(pickerLink)))}
     }
@@ -365,7 +365,7 @@ class MainActivity:ComponentActivity() {
     Action(if(expanded) "Hide activity log" else "Show activity log"){expanded=!expanded}
     if(expanded) Action("Copy log"){
      val clipboard=getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
-     clipboard.setPrimaryClip(android.content.ClipData.newPlainText("AlbumBeam diagnostic log",entries.joinToString("\n")))
+     clipboard.setPrimaryClip(android.content.ClipData.newPlainText("PhotosBeam diagnostic log",entries.joinToString("\n")))
     }
    }
    if(expanded) Text(entries.takeLast(24).asReversed().joinToString("\n").ifBlank{"No events yet"},modifier=Modifier.heightIn(max=200.dp).verticalScroll(rememberScrollState()),style=MaterialTheme.typography.bodySmall)
@@ -381,7 +381,7 @@ class MainActivity:ComponentActivity() {
   val icons=listOf(AppIcons.Photos,AppIcons.Remote,AppIcons.Settings)
   BoxWithConstraints(Modifier.fillMaxSize()){
    val wide=maxWidth>=600.dp
-   Scaffold(topBar={TopAppBar(title={Column{Text("AlbumBeam",style=MaterialTheme.typography.titleLarge);Text(labels[tab],style=MaterialTheme.typography.labelMedium)}})},
+   Scaffold(topBar={TopAppBar(title={Column{Text("PhotosBeam",style=MaterialTheme.typography.titleLarge);Text(labels[tab],style=MaterialTheme.typography.labelMedium)}})},
     bottomBar={if(!wide)NavigationBar{labels.forEachIndexed{i,label->NavigationBarItem(selected=tab==i,onClick={tab=i},icon={Icon(icons[i],null)},label={Text(label)})}}}
    ){padding->
     Row(Modifier.fillMaxSize().padding(padding)){
@@ -418,17 +418,17 @@ class MainActivity:ComponentActivity() {
         }}
         OutlinedCard(Modifier.fillMaxWidth()){Column(Modifier.padding(20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
          Text("Phone & cloud picker",style=MaterialTheme.typography.titleLarge)
-         Text("Use Android’s photo picker. Google Photos cloud media appears when enabled in your system picker. Your phone streams the provider-supplied files to the TV without AlbumBeam transcoding.")
+         Text("Use Android’s photo picker. Google Photos cloud media appears when enabled in your system picker. Your phone streams the provider-supplied files to the TV without PhotosBeam transcoding.")
          Text("Keep this phone on the same network during viewing. Cloud files may download before playback; available quality depends on the provider.",style=MaterialTheme.typography.bodySmall)
          Button(enabled=connection!=null && !nativeBusy,onClick={nativePicker.launch(PickVisualMediaRequest.Builder().setMediaType(ActivityResultContracts.PickVisualMedia.ImageAndVideo).apply{if(android.os.Build.VERSION.SDK_INT>=33)setMediaCapabilitiesForTranscoding(null)}.build())}){Text(if(nativeBusy)"Preparing media…" else "Choose with Android picker")}
          OutlinedButton(enabled=connection!=null && !nativeBusy,onClick={filePicker.launch(arrayOf("image/*","video/*"))}){Text("Choose files on phone")}
-         Text("For original 4K60 files, choose a local camera or downloaded original file. System picker transcoding is disabled; AlbumBeam streams the provided bytes unchanged.",style=MaterialTheme.typography.bodySmall)
+         Text("For original 4K60 files, choose a local camera or downloaded original file. System picker transcoding is disabled; PhotosBeam streams the provided bytes unchanged.",style=MaterialTheme.typography.bodySmall)
          if(nativeBusy)LinearProgressIndicator(Modifier.fillMaxWidth())
          OutlinedButton(onClick={stopService(NativeSharing.intent(this@MainActivity));status="Phone media sharing stopped"}){Text("Stop phone sharing")}
         }}
         Text("Selecting many photos",style=MaterialTheme.typography.titleLarge)
-        Text("Both pickers support multiple items, subject to their limits. AlbumBeam cannot add Select all, whole-album, day or week controls inside Google’s or Android’s picker. Search an album or date in Google’s selection screen, then select the items it offers. Use any group selection controls your picker provides.")
-        Text("For local media, use your gallery’s Select all or date-group controls, then Share → AlbumBeam. You can also download originals to a local folder and use Choose files on phone. Gallery sharing limits vary; Google Photos may share a web link instead of files. Google Photos selections are limited to 2,000 items per session; Android’s limit varies by device.",style=MaterialTheme.typography.bodySmall)
+        Text("Both pickers support multiple items, subject to their limits. PhotosBeam cannot add Select all, whole-album, day or week controls inside Google’s or Android’s picker. Search an album or date in Google’s selection screen, then select the items it offers. Use any group selection controls your picker provides.")
+        Text("For local media, use your gallery’s Select all or date-group controls, then Share → PhotosBeam. You can also download originals to a local folder and use Choose files on phone. Gallery sharing limits vary; Google Photos may share a web link instead of files. Google Photos selections are limited to 2,000 items per session; Android’s limit varies by device.",style=MaterialTheme.typography.bodySmall)
        }
        1->{
         Text("TV remote",style=MaterialTheme.typography.headlineSmall)
@@ -450,10 +450,10 @@ class MainActivity:ComponentActivity() {
          Switch(checked=encryptMedia,onCheckedChange={encryptMedia=it;getSharedPreferences("settings",MODE_PRIVATE).edit().putBoolean("encrypt-media",it).apply()})
         }
         Text(if(encryptMedia)"Phone media uses encrypted HTTPS." else "Phone media uses plain HTTP on your home network. Other devices on that network may observe media and its temporary access grant. Pairing stays encrypted. Google connections always use HTTPS.",style=MaterialTheme.typography.bodySmall)
-        Text("Maximum available playback quality is selected by default. 4K60 requires a supplied 4K60 file, a compatible TV decoder, sufficient network speed and a suitable display mode. AlbumBeam never transcodes phone media.")
+        Text("Maximum available playback quality is selected by default. 4K60 requires a supplied 4K60 file, a compatible TV decoder, sufficient network speed and a suitable display mode. PhotosBeam never transcodes phone media.")
         HorizontalDivider()
         Text("Device pairing",style=MaterialTheme.typography.titleLarge)
-        Text("Pairing survives app restarts and device reboots. Open AlbumBeam on both devices to reconnect. Google permission and media selections may expire separately.")
+        Text("Pairing survives app restarts and device reboots. Open PhotosBeam on both devices to reconnect. Google permission and media selections may expire separately.")
         OutlinedButton(onClick={zoomResult.launch(Intent().setClassName(this@MainActivity,"dev.personal.photostv.ZoomScannerActivity"))}){Text("Scan with camera zoom controls")}
         OutlinedButton(enabled=hasSavedPairing,onClick={forgetPairing()}){Text("Forget TV")}
         OutlinedButton(enabled=connection!=null,onClick={authorize(true)}){Text("Renew Google authorization")}
@@ -464,9 +464,9 @@ class MainActivity:ComponentActivity() {
         if(tvReport.isNotBlank()){
          Text(tvReport.takeLast(10000),Modifier.heightIn(max=240.dp).verticalScroll(rememberScrollState()),style=MaterialTheme.typography.bodySmall)
          OutlinedButton(onClick={startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT,tvReport),"Share TV log"))}){Text("Share TV log")}
-         OutlinedButton(onClick={(getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("AlbumBeam TV log",tvReport))}){Text("Copy TV log")}
+         OutlinedButton(onClick={(getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("PhotosBeam TV log",tvReport))}){Text("Copy TV log")}
         }
-        Text("AlbumBeam ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",style=MaterialTheme.typography.labelMedium)
+        Text("PhotosBeam ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",style=MaterialTheme.typography.labelMedium)
        }
       }
      }
@@ -603,7 +603,7 @@ class MainActivity:ComponentActivity() {
    Box(Modifier.widthIn(max=720.dp).background(Color(0xFF0D0D0F),androidx.compose.foundation.shape.RoundedCornerShape(24.dp)).padding(32.dp)){
     Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(16.dp)){
      Text("Settings & diagnostics",style=MaterialTheme.typography.headlineMedium)
-     Text("AlbumBeam ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+     Text("PhotosBeam ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
      Text("Device pairing is remembered. Google authorization and selections expire separately. Forgetting the phone revokes its access to this TV.")
      Action("Forget paired phone"){forgetPairing();tvSettings=false}
      Action("Send detailed log to phone"){server?.sendLogToPhone();status="TV log queued for paired phone"}
@@ -615,7 +615,7 @@ class MainActivity:ComponentActivity() {
    }
   }
   Column(Modifier.fillMaxSize().padding(horizontal=40.dp,vertical=24.dp),verticalArrangement=Arrangement.spacedBy(16.dp)) {
-   Text("AlbumBeam",style=MaterialTheme.typography.headlineMedium)
+   Text("PhotosBeam",style=MaterialTheme.typography.headlineMedium)
    Text(status,style=MaterialTheme.typography.bodyLarge)
 
    Row(horizontalArrangement=Arrangement.spacedBy(16.dp)) {
@@ -629,7 +629,7 @@ class MainActivity:ComponentActivity() {
      Image(bitmap.asImageBitmap(),"Pairing QR",Modifier.size(240.dp))
      Column(verticalArrangement=Arrangement.spacedBy(16.dp)){
       Text("Connect your phone",style=MaterialTheme.typography.headlineSmall)
-      Text("Open AlbumBeam Companion on the same home network.")
+      Text("Open PhotosBeam Companion on the same home network.")
       Action("Full-screen QR"){fullQr=true}
       Action("Show 6-character code"){showCode=true}
      }
@@ -723,7 +723,7 @@ class MainActivity:ComponentActivity() {
        }
        Text("Fast startup: ${if(fastStartup) "On" else "Off"}. Skipping an optional seek index can limit seeking on some videos.")
        Action(if(fastStartup) "Restart with seek index" else "Restart with fast startup"){fastStartup=!fastStartup;qualityInfo="";videoOptions=emptyList();qualityOpen=false}
-       Text(if(nativeFile(file))"The phone streams the provider-supplied file without AlbumBeam transcoding. Cloud providers may supply a converted file. The decoded track below shows actual playback quality." else "Google supplies a transcoded video. Original-file video download and a server resolution selector are unavailable. Source metadata does not prove delivered playback quality.")
+       Text(if(nativeFile(file))"The phone streams the provider-supplied file without PhotosBeam transcoding. Cloud providers may supply a converted file. The decoded track below shows actual playback quality." else "Google supplies a transcoded video. Original-file video download and a server resolution selector are unavailable. Source metadata does not prove delivered playback quality.")
        if(videoOptions.size>1){Text("Available supported video tracks:");videoOptions.forEach{option->Action((if(option.selected) "✓ " else "")+option.label){option.choose();qualityOpen=false}}}
        else if(videoOptions.size==1)Text("One supported rendition: ${videoOptions.single().label}. No alternate stream quality is available.")
        else Text("No playable video track has been reported yet. Check the TV log if playback fails.")

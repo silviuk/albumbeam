@@ -1,4 +1,15 @@
-AlbumBeam — personal Google Photos session viewer
+PhotosBeam — personal photo and video viewer for Android TV
+
+Version 0.2.3: formerly AlbumBeam. Both app labels, notifications, diagnostics,
+launcher icons and the TV banner now use PhotosBeam. Install these APKs over
+the previous apps; do not uninstall. App package IDs, signing certificate, private
+paired-device storage and discovery protocol remain unchanged. The GitHub URL
+remains https://github.com/silviuk/albumbeam. No new Google Cloud project or OAuth
+client is needed. Optionally change the app name under Google Auth Platform >
+Branding in your existing project to match the new consent-screen name.
+
+The launcher has separate vector foreground/background layers and an Android 13+
+monochrome layer for themed icons. The TV banner includes the PhotosBeam wordmark.
 
 
 Development version 0.2.0
@@ -9,7 +20,7 @@ focusable media cards, a simpler home screen and a separate settings/log panel.
 Pair once after installing this version on BOTH devices. Device identity and
 connection credentials are encrypted with an Android Keystore AES key and saved
 privately with backups disabled. Pairing survives launches and reboots; open
-AlbumBeam on both devices to reconnect. Discovery finds the same pinned TV after
+PhotosBeam on both devices to reconnect. Discovery finds the same pinned TV after
 its IP or listening port changes. End viewing retains pairing; Forget pairing
 revokes the saved device. Google tokens, picker sessions and media selections
 remain temporary and can expire independently. A reinstall/data reset loses
@@ -19,13 +30,13 @@ Three phone selection entry points are available:
 - Google Photos: existing Picker API flow; the TV fetches directly from Google.
 - Phone & cloud picker: Android's native multi-select picker, including eligible
   cloud providers enabled on the phone. No broad media-library permission.
-- Choose files on phone / Gallery > Share > AlbumBeam: select local originals or
+- Choose files on phone / Gallery > Share > PhotosBeam: select local originals or
   downloaded files using Documents or your gallery's selection tools. Confirm
   Send shared items to TV after the companion opens. Gallery sharing limits vary;
   a web link shared from Google Photos does not grant access to its media files.
 
 Native/file selections are streamed from the phone using authenticated HTTP range
-requests, without AlbumBeam transcoding, whole-file buffering or disk copies.
+requests, without PhotosBeam transcoding, whole-file buffering or disk copies.
 Android picker transcoding is explicitly disabled and original media format is
 requested when opening provider files on supported Android versions. Cloud
 providers still control which file they supply; original uploads are not promised.
@@ -49,17 +60,17 @@ HTTP/HTTPS transport. Unknown frame rate is reported explicitly. A compatible
 4K60 file, decoder, display mode and sufficient LAN throughput are all needed.
 Google Photos Picker's =dv video download is transcoded by Google; there is no
 API parameter for an original 4K60 stream. Local original files are the suitable
-route when unchanged source video matters. AlbumBeam never transcodes videos.
+route when unchanged source video matters. PhotosBeam never transcodes videos.
 
 Select all / album / day / week
-Google's picker owns its selection controls. AlbumBeam cannot add Select all or
+Google's picker owns its selection controls. PhotosBeam cannot add Select all or
 retrieve an entire existing album, timeline, day or week through the Picker API.
 Search album titles/dates and use the controls Google presents; desktop range
 selection behavior is not guaranteed. Google's session limit is 2,000 items.
 Android's picker also owns its controls and its device-dependent selection limit.
 For local media, use your gallery's Select all or date groups when offered, then
-Share > AlbumBeam. Alternatively download originals into a local folder and use
-Choose files on phone. AlbumBeam accepts at most 2,000 files per session.
+Share > PhotosBeam. Alternatively download originals into a local folder and use
+Choose files on phone. PhotosBeam accepts at most 2,000 files per session.
 
 Development verification
 See VALIDATION-0.2.0.txt for checks completed and checks blocked in this environment.
@@ -127,7 +138,7 @@ Install albumbeam-phone-v0.1.apk on an Android phone with Google Play services a
 albumbeam-tv-v0.1.apk on Android/Google TV (Android 8+). Using Android platform-tools:
   adb -s PHONE_SERIAL install -r albumbeam-phone-v0.1.apk
   adb -s TV_SERIAL install -r albumbeam-tv-v0.1.apk
-Both apps are named AlbumBeam. Launch the TV app, then open the companion and
+Both apps are named PhotosBeam. Launch the TV app, then open the companion and
 choose Scan TV QR. On first use, Google's barcode-scanner component may download.
 Choose Select photos on the phone, authorize Google access, and search for your
 album title in Google Photos. Select items and finish. Watch the TV populate.
@@ -179,7 +190,7 @@ own debug certificate; register its SHA1 instead.
 Release status
 v0.1 is an initial testing release. Builds, unit tests and Android lint pass.
 Google account integration, physical TV playback and 4K rendering are unverified.
-AlbumBeam is an independent project and is not affiliated with Google.
+PhotosBeam is an independent project and is not affiliated with Google.
 
 Pairing fix in v0.1.1
 Upgrade both apps to v0.1.1, then choose End / Pair again on the TV and scan the
@@ -198,7 +209,7 @@ Both apps show their installed version and use a TV/photo/beam launcher icon.
 Choose Show activity log to inspect timestamped pairing, TLS, Google API status,
 selection loading and video events. Copy log copies the bounded 120-event buffer
 to the device clipboard. Logs are memory-only; operational events also appear in
-Android logcat under AlbumBeam. They exclude Google tokens, QR secrets, media
+Android logcat under PhotosBeam. They exclude Google tokens, QR secrets, media
 URLs, selected filenames and session IDs. TLS exceptions include their nested
 causes to help diagnose the S24 Ultra / Philips TV handshake failure, which is
 not yet confirmed fixed. Send the phone and TV logs after reproducing the issue.
@@ -272,7 +283,7 @@ to 2,000 items and exposes Copy selection link / Share selection link. Open the
 link in a computer browser, sign in with the same Google account, search an album
 title, select items using Google's own picker, and finish. No desktop app or
 backend is needed. Links stop working after selection completes or expires.
-Google controls that picker: AlbumBeam cannot inject Select all, choose a whole
+Google controls that picker: PhotosBeam cannot inject Select all, choose a whole
 existing album automatically, or keep albums synchronized.
 
 On TV open Quality & info in the viewer. Source metadata is shown separately
@@ -296,7 +307,7 @@ about every five seconds. Commands require the existing authenticated/pinned
 pairing and have request IDs to prevent duplicate execution during retries.
 Update both apps for phone controls; Google Cloud settings stay unchanged.
 
-Video bytes still stream directly from Google's supported =dv endpoint. AlbumBeam
+Video bytes still stream directly from Google's supported =dv endpoint. PhotosBeam
 performs no transcoding and adds no full-file pre-download. Google supplies that
 rendition; the Photos API cannot switch to original-file video streaming.
 The streaming extractor omits optional MP4 tail seek-map/GOP scans that can cause

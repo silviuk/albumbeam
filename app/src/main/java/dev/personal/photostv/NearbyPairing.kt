@@ -27,7 +27,7 @@ class NearbyPairing(context:Context){
    override fun onUnregistrationFailed(info:NsdServiceInfo,code:Int){}
   }
   registration=listener
-  manager.registerService(NsdServiceInfo().apply{serviceName="AlbumBeam TV";serviceType="_albumbeam._tcp.";setPort(port);setAttribute("pin",pin)},NsdManager.PROTOCOL_DNS_SD,listener)
+  manager.registerService(NsdServiceInfo().apply{serviceName="PhotosBeam TV";serviceType="_albumbeam._tcp.";setPort(port);setAttribute("pin",pin)},NsdManager.PROTOCOL_DNS_SD,listener)
  }
  fun stopAdvertising(){registration?.let{runCatching{manager.unregisterService(it)}};registration=null}
  fun discover(found:(NearbyTV)->Unit){
@@ -48,7 +48,7 @@ class NearbyPairing(context:Context){
    })
   }
   val listener=object:NsdManager.DiscoveryListener{
-   override fun onDiscoveryStarted(type:String){AppLog.add("Phone: searching for nearby AlbumBeam TVs")}
+   override fun onDiscoveryStarted(type:String){AppLog.add("Phone: searching for nearby PhotosBeam TVs")}
    override fun onStartDiscoveryFailed(type:String,error:Int){AppLog.add("Phone: discovery failed ($error); use QR pairing")}
    override fun onStopDiscoveryFailed(type:String,error:Int){}
    override fun onDiscoveryStopped(type:String){}

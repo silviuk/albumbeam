@@ -10,14 +10,14 @@ import java.time.format.DateTimeFormatter
 object AppLog {
  private val buffer=MutableStateFlow<List<String>>(emptyList())
  val entries=buffer.asStateFlow()
- internal var output:(String)->Unit={Log.i("AlbumBeam",it);Unit}
+ internal var output:(String)->Unit={Log.i("PhotosBeam",it);Unit}
  @Synchronized fun add(event:String){
   val line=LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"))+"  "+event
   buffer.value=(buffer.value+line).takeLast(500)
   output(line)
  }
  @Synchronized fun export():String=buildString{
-  append("AlbumBeam ${BuildConfig.VERSION_NAME} (${BuildConfig.FLAVOR}) • ${java.time.Instant.now()}\n")
+  append("PhotosBeam ${BuildConfig.VERSION_NAME} (${BuildConfig.FLAVOR}) • ${java.time.Instant.now()}\n")
   val runtime=Runtime.getRuntime()
   append("Heap used/max MiB: ${(runtime.totalMemory()-runtime.freeMemory())/1048576}/${runtime.maxMemory()/1048576}\n")
   append(buffer.value.joinToString("\n"))
