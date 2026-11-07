@@ -36,5 +36,7 @@ fun videoHttpClient(http1Only:Boolean=false):OkHttpClient = OkHttpClient.Builder
   // Avoid gzip/chunk transformations obscuring byte ranges in MP4 delivery.
   val response=chain.proceed(chain.request().newBuilder().header("Accept-Encoding","identity").build())
   AppLog.add("Video HTTP ${response.code}; protocol=${response.protocol}; content-type=${response.header("Content-Type")}; length=${response.header("Content-Length")}; requested-range=${chain.request().header("Range") ?: "none"}; content-range=${response.header("Content-Range") ?: "none"}; accept-ranges=${response.header("Accept-Ranges") ?: "unspecified"}; TTFB=${response.receivedResponseAtMillis-response.sentRequestAtMillis}ms")
+  val range=chain.request().header("Range")
+  if(response.code==200 && range!=null && !range.startsWith("bytes=0-"))AppLog.add("Video: server ignored a nonzero byte range; reading/skipping from the start can delay MP4 metadata and seeking")
   response
  }.build()

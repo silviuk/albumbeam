@@ -340,3 +340,29 @@ DNS family counts, connection/TLS phases and destination hostnames are logged
 without signed URL paths/queries or bearer headers. Byte encoding is identity
 to keep range offsets unambiguous. These changes are not proof of a fix for a
 Google/CDN outage or network block; share the new log if it still stalls.
+
+Video startup and track controls in v0.2.4
+The earlier TV logs show Google download header timeouts and repeated whole-file
+responses to range requests, before video decoding. Google connections now try
+an independent HTTP/1.1 pool after 2.5 seconds without response headers, or at
+once after a connection failure. The first response owns the stream; the losing
+request is cancelled and any late response body is closed. A winning HTTP/1.1
+route is remembered for the current video, including later range requests.
+Phone streaming is unchanged. This adds no transcoding or whole-file download.
+
+Hold OK > Quality & info > Viewing options shows Video resolution, Video codec,
+Exact supplied tracks and Automatic (best supported quality). Options come from
+supported tracks reported by Media3; manual selection stays selected, and Auto
+restores hardware-first ranking by resolution, frame rate and codec. Track rows
+include delivered codec/profile, frame rate and bitrate when supplied.
+These controls switch tracks inside the supplied media, not Google's server
+rendition. A single-track MP4 has no alternate resolution/codec to switch to.
+Use another source file through the phone picker for a different encoding.
+https://developer.android.com/media/media3/exoplayer/track-selection
+https://developers.google.com/photos/picker/guides/media-items#video-base-urls
+
+New logs separate response-header latency, first media bytes, requested offsets,
+bytes transferred, throughput, ignored Range requests and first-frame time.
+Signed URLs and bearer tokens remain excluded. The fallback addresses a stalled
+connection path; it cannot guarantee startup time when Google's servers delay
+both paths, ignore Range, or require downloading MP4 metadata near the file end.

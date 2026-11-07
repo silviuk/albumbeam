@@ -61,4 +61,21 @@ class VideoSourceTest {
    withTimeout(1500){while(http.dispatcher.runningCallsCount()>0)delay(10)}
   }finally{release.countDown();source.stop()}
  }
+ @Test fun stalledTlsHeadersAreBypassedWithoutWaitingForReadTimeout()=runBlocking{
+  val count=java.util.concurrent.atomic.AtomicInteger()
+  val release=CountDownLatch(1)
+  val source=server{
+   if(count.incrementAndGet()==1)release.await(5,TimeUnit.SECONDS)
+   NanoHTTPD.newFixedLengthResponse("video")
+  }
+  val primary=client();val fallback=client()
+  try{
+   val started=System.nanoTime()
+   val result=locateVideoSource("https://127.0.0.1:${source.listeningPort}/video","token",VideoCallFactory(primary,fallback,100))
+   assertEquals("127.0.0.1",result.url.host)
+   assertTrue(count.get()>=2)
+   assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started)<3000)
+  }finally{release.countDown();source.stop()}
+ }
+
 }

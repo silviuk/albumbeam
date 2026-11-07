@@ -52,7 +52,8 @@ fun sourceDimensions(file:JSONObject):String{
  val w=metadata?.optInt("width",0) ?: 0;val h=metadata?.optInt("height",0) ?: 0
  return if(w>0 && h>0) "${w}x${h}" else "unknown"
 }
-data class VideoQualityOption(val label:String,val selected:Boolean,val choose:()->Unit)
+data class VideoQualityOption(val label:String,val selected:Boolean,val width:Int,val height:Int,val mime:String,val codec:String,val choose:()->Unit)
+fun videoCodecLabel(mime:String)=when(mime){"video/hevc"->"HEVC / H.265";"video/avc"->"AVC / H.264";"video/av01"->"AV1";"video/x-vnd.on2.vp9"->"VP9";"video/dolby-vision"->"Dolby Vision";else->mime.ifBlank{"Unknown codec"}}
 fun videoReadiness(file:JSONObject)=file.optJSONObject("mediaFileMetadata")?.optJSONObject("videoMetadata")?.optString("processingStatus").orEmpty()
 
 /** Logs error types/codes only: exception messages may contain protected media URLs. */
@@ -178,8 +179,18 @@ private class ZoomVideoFrame(context:Context,player:Player):FrameLayout(context)
  }
  val hardwareMimes=remember{hardwareVideoMimes()}
  val http=remember{mediaClient(file,http1Only)}
- val sourceFactory=remember{OkHttpDataSource.Factory(http).setUserAgent("PhotosBeam/${BuildConfig.VERSION_NAME}")}
- val resolver=remember{if(nativeFile(file))null else videoHttpClient(http1Only).newBuilder().followRedirects(false).readTimeout(10,TimeUnit.SECONDS).build()}
+ val compatibilityPreferred=remember{java.util.concurrent.atomic.AtomicBoolean()}
+ val calls=remember{if(nativeFile(file) || http1Only)http else VideoCallFactory(http,videoHttpClient(true),preferCompatibility=compatibilityPreferred)}
+ val sourceFactory=remember{OkHttpDataSource.Factory(calls).setUserAgent("PhotosBeam/${BuildConfig.VERSION_NAME}").setTransferListener(VideoTransferLog())}
+ var automaticTrack by remember{mutableStateOf(true)}
+ val bestTrack=remember{mutableStateOf<VideoQualityOption?>(null)}
+ var suppliedTracks by remember{mutableStateOf<List<VideoQualityOption>>(emptyList())}
+ LaunchedEffect(suppliedTracks,automaticTrack){optionsCallback(listOfNotNull(bestTrack.value?.copy(selected=automaticTrack))+suppliedTracks)}
+
+ val resolver=remember{if(nativeFile(file))null else {
+  val primary=videoHttpClient(http1Only).newBuilder().followRedirects(false).readTimeout(10,TimeUnit.SECONDS).build()
+  if(http1Only)primary else VideoCallFactory(primary,videoHttpClient(true).newBuilder().followRedirects(false).readTimeout(10,TimeUnit.SECONDS).build(),preferCompatibility=compatibilityPreferred)
+ }}
  val player=remember{
   AppLog.add("Video: preparing progressive playback; processing=${processing.ifBlank{"unspecified"}}; MIME=${file.optString("mimeType")}")
   ExoPlayer.Builder(context,DefaultRenderersFactory(context).setMediaCodecSelector(hardwareFirstDecoderSelector()).setEnableDecoderFallback(true))
@@ -209,23 +220,29 @@ private class ZoomVideoFrame(context:Context,player:Player):FrameLayout(context)
    }
    override fun onVideoSizeChanged(size:VideoSize){if(size.height>0)aspectCallback(size.width*size.pixelWidthHeightRatio/size.height);decoded="Decoded video: ${size.width}x${size.height}";AppLog.add("Video decoded ${size.width}x${size.height}; pixel ratio ${size.pixelWidthHeightRatio}");infoCallback("${if(nativeFile(file)) "Phone/provider media (no PhotosBeam transcode)" else "Google-provided transcode"}\n$decoded\n$trackInfo\n$decoderInfo\nPreferred hardware codecs: ${hardwareMimes.joinToString().ifBlank{"none reported"}}\n$outputInfo")}
    override fun onTracksChanged(tracks:Tracks){
-    val choices=mutableListOf<VideoQualityOption>()
+    val choices=mutableListOf<Pair<VideoTrackPreference,VideoQualityOption>>()
     val supported=mutableListOf<Triple<Tracks.Group,Int,Format>>()
     for(group in tracks.groups)if(group.type==C.TRACK_TYPE_VIDEO)for(i in 0 until group.length)if(group.isTrackSupported(i)){
      val format=group.getTrackFormat(i);supported+=Triple(group,i,format)
-     val label="${format.width}x${format.height}"+(if(format.frameRate>0)" • ${format.frameRate} fps" else "")+(if(format.bitrate>0) " • ${"%.1f".format(format.bitrate/1_000_000.0)} Mbps" else "")
-     choices+=VideoQualityOption(label,group.isTrackSelected(i)){
+     val label="${format.width}x${format.height} • ${videoCodecLabel(format.sampleMimeType.orEmpty())}"+(if(format.codecs.isNullOrBlank())"" else " (${format.codecs})")+(if(format.frameRate>0)" • ${format.frameRate} fps" else "")+(if(format.bitrate>0) " • ${"%.1f".format(format.bitrate/1_000_000.0)} Mbps" else "")
+     val choice=VideoQualityOption(label,group.isTrackSelected(i),format.width,format.height,format.sampleMimeType.orEmpty(),format.codecs.orEmpty()){
+      automaticTrack=false
       player.trackSelectionParameters=player.trackSelectionParameters.buildUpon().setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup,listOf(i))).build()
       AppLog.add("Video: user selected $label")
      }
+     choices+=VideoTrackPreference(hasHardwareDecoder(context,format),PlaybackQuality(format.width,format.height,format.frameRate,format.bitrate),format.sampleMimeType.orEmpty()) to choice
     }
-    if(!choseMaximumTrack && supported.isNotEmpty()){
+    val best=supported.maxByOrNull{VideoTrackPreference(hasHardwareDecoder(context,it.third),PlaybackQuality(it.third.width,it.third.height,it.third.frameRate,it.third.bitrate),it.third.sampleMimeType.orEmpty())}
+    bestTrack.value=best?.let{entry->VideoQualityOption("Automatic • best supported quality",automaticTrack,0,0,"",""){
+     automaticTrack=true
+     player.trackSelectionParameters=player.trackSelectionParameters.buildUpon().setOverrideForType(TrackSelectionOverride(entry.first.mediaTrackGroup,listOf(entry.second))).build()
+    }}
+    if(!choseMaximumTrack && best!=null){
      choseMaximumTrack=true
-     val best=supported.maxByOrNull{VideoTrackPreference(hasHardwareDecoder(context,it.third),PlaybackQuality(it.third.width,it.third.height,it.third.frameRate,it.third.bitrate),it.third.sampleMimeType.orEmpty())}!!
      if(!best.first.isTrackSelected(best.second))player.trackSelectionParameters=player.trackSelectionParameters.buildUpon().setOverrideForType(TrackSelectionOverride(best.first.mediaTrackGroup,listOf(best.second))).build()
      AppLog.add("Video: best supported track requested ${best.third.sampleMimeType}; ${best.third.width}x${best.third.height}; ${best.third.frameRate} fps; hardware=${hasHardwareDecoder(context,best.third)}")
     }
-    optionsCallback(choices)
+    suppliedTracks=choices.sortedByDescending{it.first}.map{it.second}
 
     for(group in tracks.groups)for(i in 0 until group.length)if(group.isTrackSelected(i)){
      val f=group.getTrackFormat(i)
@@ -258,7 +275,7 @@ private class ZoomVideoFrame(context:Context,player:Player):FrameLayout(context)
    catch(e:Exception){message="Video source failed: ${mediaError(e)}. Retry or use phone media.";AppLog.add(message);failed(message);stateCallback("Source connection failed")}
   }
   val progressJob=playbackScope.launch{while(isActive){position=player.currentPosition.coerceAtLeast(0);duration=player.duration.takeIf{it>0} ?: 0L;delay(if(chromeNow)500 else 2000)}}
-  onDispose{prepareJob.cancel();progressJob.cancel();controlCallback(null);player.removeListener(listener);player.release()}
+  onDispose{prepareJob.cancel();progressJob.cancel();controlCallback(null);optionsCallback(emptyList());player.removeListener(listener);player.release()}
  }
  Box(modifier.background(Color.Black)){
   AndroidView(factory={ZoomVideoFrame(it,player)},update={it.updateViewport(viewport)},modifier=Modifier.fillMaxSize())

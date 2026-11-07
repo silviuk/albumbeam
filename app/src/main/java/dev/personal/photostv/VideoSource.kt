@@ -22,7 +22,7 @@ private suspend fun Call.headersResponse():Response=suspendCancellableCoroutine{
 /** Resolve only the authorization hop. The player opens the returned origin with its own pool,
  * preventing HTTP/2 coalescing from reusing lh3's connection for Google's download frontend.
  * Do not fetch the video body here or turn a header timeout into a whole-file download. */
-suspend fun locateVideoSource(base:String,token:String,client:OkHttpClient):VideoLocation {
+suspend fun locateVideoSource(base:String,token:String,client:Call.Factory):VideoLocation {
  val original=base.toHttpUrl()
  require(original.isHttps){"Google video requires HTTPS"}
  val authorization=mapOf("Authorization" to "Bearer $token")

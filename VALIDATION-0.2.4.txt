@@ -1,0 +1,20 @@
+PhotosBeam 0.2.4 — startup connection fallback and video track controls
+
+Investigation:
+- User's earlier logs show 20-second Google response-header timeouts, preceding
+  decoder initialization, plus HTTP 200 responses ignoring nonzero byte ranges.
+- Existing 750ms startup buffering does not cause those network waits.
+- Fresh v0.2.3 device logs were requested for user-specific verification.
+
+Changes:
+- At 2.5s without headers (or immediately on network failure), try independent
+  HTTP/1.1; cancel/close the loser. Remember the winner for the current video.
+- Fallback covers the authorization redirect lookup and subsequent media opens.
+  Redirect authorization stripping and HTTPS checks remain in VideoSource.
+- Phone media delivery, source bytes, resolution, frame rate and codecs unchanged.
+- Resolution, codec, exact supported tracks and Auto controls in Viewing options.
+- Per-open media byte/offset/throughput timing and explicit ignored-range logging.
+
+Validation in progress: existing tests, deterministic cancellation/header-race
+regressions, a real TLS stalled-header regression, builds, lint and signed APKs.
+No physical device or live private Google media is available on this host.

@@ -724,9 +724,25 @@ class MainActivity:ComponentActivity() {
        Text("Fast startup: ${if(fastStartup) "On" else "Off"}. Skipping an optional seek index can limit seeking on some videos.")
        Action(if(fastStartup) "Restart with seek index" else "Restart with fast startup"){fastStartup=!fastStartup;qualityInfo="";videoOptions=emptyList();qualityOpen=false}
        Text(if(nativeFile(file))"The phone streams the provider-supplied file without PhotosBeam transcoding. Cloud providers may supply a converted file. The decoded track below shows actual playback quality." else "Google supplies a transcoded video. Original-file video download and a server resolution selector are unavailable. Source metadata does not prove delivered playback quality.")
-       if(videoOptions.size>1){Text("Available supported video tracks:");videoOptions.forEach{option->Action((if(option.selected) "✓ " else "")+option.label){option.choose();qualityOpen=false}}}
-       else if(videoOptions.size==1)Text("One supported rendition: ${videoOptions.single().label}. No alternate stream quality is available.")
-       else Text("No playable video track has been reported yet. Check the TV log if playback fails.")
+       val tracks=videoOptions.filter{it.mime.isNotBlank()}
+       videoOptions.firstOrNull{it.mime.isBlank()}?.let{option->Action((if(option.selected)"✓ " else "")+option.label){option.choose();qualityOpen=false}}
+       if(tracks.isNotEmpty()){
+        Text("Video resolution",style=MaterialTheme.typography.titleMedium)
+        tracks.distinctBy{it.width to it.height}.forEach{resolution->
+         val matching=tracks.filter{it.width==resolution.width && it.height==resolution.height}
+         val choice=matching.firstOrNull{it.selected} ?: matching.first()
+         Action((if(matching.any{it.selected})"✓ " else "")+"${resolution.width} × ${resolution.height}"){choice.choose();qualityOpen=false}
+        }
+        Text("Video codec",style=MaterialTheme.typography.titleMedium)
+        tracks.distinctBy{it.mime}.forEach{codec->
+         val matching=tracks.filter{it.mime==codec.mime}
+         val choice=matching.firstOrNull{it.selected} ?: matching.first()
+         Action((if(matching.any{it.selected})"✓ " else "")+videoCodecLabel(codec.mime)){choice.choose();qualityOpen=false}
+        }
+        Text("Exact supplied tracks",style=MaterialTheme.typography.titleMedium)
+        tracks.forEach{option->Action((if(option.selected)"✓ " else "")+option.label){option.choose();qualityOpen=false}}
+        if(tracks.size==1)Text("This file contains one supported video track. Other resolutions/codecs require another source file; these controls cannot convert it.")
+       }else Text("Resolution and codec choices appear after the video's metadata loads. If download headers stall, an independent HTTP/1.1 connection starts automatically.")
       }else{
        PhotoQuality.entries.forEach{quality->Action((if(photoQuality==quality) "✓ " else "")+quality.label){photoQuality=quality;loaded=false;qualityInfo="";qualityOpen=false}}
        Text("Full-size file downloads the image Google provides; display decoding remains bounded to 4K. Metadata may differ from the original upload.")
