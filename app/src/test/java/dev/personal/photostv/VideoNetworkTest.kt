@@ -34,4 +34,24 @@ class VideoNetworkTest{
    assertFalse(AppLog.export().contains(secret));assertFalse(AppLog.export().contains(auth))
   }finally{redirect.stop();target.stop()}
  }
+ @Test fun streamingOnlyRejectsIgnoredTailBeforeConsumingBody(){
+  val requests=java.util.concurrent.atomic.AtomicInteger()
+  val server=object:NanoHTTPD(0){override fun serve(session:IHTTPSession):Response{
+   requests.incrementAndGet()
+   // An advertised huge body with no bytes: reading it would hang/fail, while
+   // rejecting headers must finish immediately with the explicit seek failure.
+   return newFixedLengthResponse(Response.Status.OK,"video/mp4",java.io.ByteArrayInputStream(byteArrayOf()),604366239L)
+  }}
+  server.start()
+  try{
+   val client=videoHttpClient(streamingOnly=true)
+   val failure=assertThrows(java.io.IOException::class.java){client.newCall(Request.Builder().url("http://127.0.0.1:${server.listeningPort}/video").header("Range","bytes=604197510-").build()).execute().close()}
+   assertTrue(hasStreamingSeekFailure(failure));assertEquals(1,requests.get())
+  }finally{server.stop()}
+ }
+ @Test fun streamingOnlyAcceptsPartialResponse(){
+  val server=object:NanoHTTPD(0){override fun serve(session:IHTTPSession):Response=newFixedLengthResponse(Response.Status.PARTIAL_CONTENT,"video/mp4","tail metadata").apply{addHeader("Content-Range","bytes 44-56/57")}}
+  server.start()
+  try{videoHttpClient(streamingOnly=true).newCall(Request.Builder().url("http://127.0.0.1:${server.listeningPort}/video").header("Range","bytes=44-").build()).execute().use{assertEquals(206,it.code);assertEquals("tail metadata",it.body!!.string())}}finally{server.stop()}
+ }
 }

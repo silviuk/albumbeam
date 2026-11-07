@@ -31,3 +31,23 @@ jobs:
             app/build/outputs/apk/tv/debug/app-tv-debug.apk
           retention-days: 3
           if-no-files-found: error
+  helper:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check helper source and generated userscript
+        run: |
+          node --version
+          node --check edge-helper/core.js
+          node --check edge-helper/content.js
+          node --test edge-helper/tests/core.test.cjs
+          python3 edge-helper/build.py
+          git diff --exit-code -- edge-helper/photosbeam-helper.user.js
+      - name: Exercise desktop and touch grids
+        run: |
+          npm install --no-save --ignore-scripts playwright@1.65.0
+          npx playwright install --with-deps chromium
+          node edge-helper/tests/browser.cjs

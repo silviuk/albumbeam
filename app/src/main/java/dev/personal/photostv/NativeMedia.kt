@@ -85,9 +85,9 @@ object NativeSharing {
  fun intent(context:Context)=Intent().setClassName(context,"dev.personal.photostv.PhoneMediaService")
 }
 fun nativeFile(file:JSONObject)=file.optString("nativePin").isNotBlank()
-fun mediaUrl(file:JSONObject,suffix:String)=file.getString("baseUrl")+if(nativeFile(file))"" else suffix
-fun mediaClient(file:JSONObject,http1Only:Boolean=false):okhttp3.OkHttpClient {
- if(!nativeFile(file))return videoHttpClient(http1Only)
+fun mediaUrl(file:JSONObject,suffix:String)=file.getString("baseUrl")+if(directFile(file))"" else suffix
+fun mediaClient(file:JSONObject,http1Only:Boolean=false,streamingOnly:Boolean=false):okhttp3.OkHttpClient {
+ if(!nativeFile(file))return videoHttpClient(http1Only,streamingOnly || webFile(file),webFile(file))
  val uri=java.net.URI(file.getString("baseUrl"))
  require(uri.host!=null && uri.port in 1..65535 && uri.rawUserInfo==null && uri.rawQuery==null && uri.rawFragment==null)
  require(uri.scheme=="https" || (uri.scheme=="http" && privateLanHost(uri.host))){"Plain HTTP media requires a private home-network address"}

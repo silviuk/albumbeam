@@ -56,6 +56,7 @@ class VideoCallFactory(
     }
     override fun onFailure(call:Call,e:IOException){
      if(completed.get())return
+     if(hasStreamingSeekFailure(e)){rejected(e);first.cancel();second.cancel();return}
      if(cancelled.get()){rejected(IOException("Canceled"));return}
      val count=failures.incrementAndGet()
      if(!alternate)startFallback()

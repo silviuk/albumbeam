@@ -10,7 +10,7 @@ import java.util.concurrent.TimeUnit
 /** Avoid long serial IPv6 black-hole attempts on TV networks; retain IPv6 as fallback. */
 fun ipv4First(addresses:List<InetAddress>):List<InetAddress> = addresses.sortedBy{if(it is Inet4Address)0 else 1}
 
-fun videoHttpClient(http1Only:Boolean=false):OkHttpClient = OkHttpClient.Builder()
+fun videoHttpClient(http1Only:Boolean=false,streamingOnly:Boolean=false,webSource:Boolean=false):OkHttpClient = OkHttpClient.Builder()
  .protocols(if(http1Only)listOf(Protocol.HTTP_1_1)else listOf(Protocol.HTTP_2,Protocol.HTTP_1_1))
  .retryOnConnectionFailure(false)
  .followRedirects(true).followSslRedirects(false)
@@ -33,10 +33,15 @@ fun videoHttpClient(http1Only:Boolean=false):OkHttpClient = OkHttpClient.Builder
   }
  }
  .addNetworkInterceptor{chain->
+  if(webSource)try{WebVideoLink.validateUrl(chain.request().url.toString())}catch(e:Exception){throw java.io.IOException("Browser stream redirect rejected")}
   // Avoid gzip/chunk transformations obscuring byte ranges in MP4 delivery.
   val response=chain.proceed(chain.request().newBuilder().header("Accept-Encoding","identity").build())
   AppLog.add("Video HTTP ${response.code}; protocol=${response.protocol}; content-type=${response.header("Content-Type")}; length=${response.header("Content-Length")}; requested-range=${chain.request().header("Range") ?: "none"}; content-range=${response.header("Content-Range") ?: "none"}; accept-ranges=${response.header("Accept-Ranges") ?: "unspecified"}; TTFB=${response.receivedResponseAtMillis-response.sentRequestAtMillis}ms")
   val range=chain.request().header("Range")
+  if(streamingOnly && refusedStreamingSeek(response.code,range)){
+   response.close();AppLog.add("Video: streaming seek rejected; stopped before consuming the full response")
+   throw StreamingSeekUnsupportedException()
+  }
   if(response.code==200 && range!=null && !range.startsWith("bytes=0-"))AppLog.add("Video: server ignored a nonzero byte range; reading/skipping from the start can delay MP4 metadata and seeking")
   response
  }.build()

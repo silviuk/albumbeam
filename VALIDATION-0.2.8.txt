@@ -1,0 +1,27 @@
+PhotosBeam 0.2.8 — explicit streaming-only behavior and Edge selection helper
+
+Delivery scope:
+- Google Picker videos default to streaming only. HTTP 200 in response to a
+  nonzero byte range is rejected before that response body can be consumed.
+- No implicit disk replay/download. Full-file preparation is an explicit slow
+  viewing option, disabled by default and never used for browser handoff.
+- This does not make Google's nonseekable end-index MP4s instantly streamable.
+- Browser helper: touch loaded-item ranges, loaded select/clear, scroll selection,
+  opt-in Shift ranges, cancellation, checked-state confirmation and diagnostics.
+- Android Edge uses Tampermonkey + userscript; desktop gets an unpacked MV3 ZIP.
+- Experimental progressive Google browser video handoff; confirmed on phone before
+  replacing TV selection. No cookie/token extraction. HTTPS Google CDN hosts only,
+  redirect validation, MP4/WebM only; rejects blob, segment and manifest URLs.
+- Source/browser dimensions and decoded TV track remain separately identified.
+
+Local validation:
+- Kotlin/Compose compilation and 76 non-network regression tests pass.
+- URL boundary, namespace, deep link query preservation and streaming seek guard
+  regressions included. APK and CI verification recorded after final builds.
+
+Hardware/service limitations:
+No physical TV/phone, signed-in Google DOM or private Google video is available in
+this environment. Browser tests use simulated mouse/touch selection grids. This
+release does not claim all Google pages expose supported controls, all web-player
+URLs transfer, or original/4K60 quality is available from Google's browser player.
+A local original phone file remains the reliable route to provided original bytes.

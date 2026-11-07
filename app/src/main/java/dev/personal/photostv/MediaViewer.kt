@@ -157,7 +157,7 @@ private class ZoomVideoFrame(context:Context,player:Player):FrameLayout(context)
 }
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-@Composable fun VideoViewer(file:JSONObject,token:String,modifier:Modifier,fastStartup:Boolean,http1Only:Boolean=false,viewport:MediaViewport=MediaViewport(),zoomMode:Boolean=false,onAspect:(Float)->Unit={},controlsVisible:Boolean,onActivity:(Boolean)->Unit,onControlReady:(((String)->Unit)?)->Unit,onState:(String)->Unit,onInfo:(String)->Unit,onOptions:(List<VideoQualityOption>)->Unit,onEnded:()->Unit,onInteraction:()->Unit,onFailure:(String)->Unit){
+@Composable fun VideoViewer(file:JSONObject,token:String,modifier:Modifier,fastStartup:Boolean,http1Only:Boolean=false,allowFullFile:Boolean=false,viewport:MediaViewport=MediaViewport(),zoomMode:Boolean=false,onAspect:(Float)->Unit={},controlsVisible:Boolean,onActivity:(Boolean)->Unit,onControlReady:(((String)->Unit)?)->Unit,onState:(String)->Unit,onInfo:(String)->Unit,onOptions:(List<VideoQualityOption>)->Unit,onEnded:()->Unit,onInteraction:()->Unit,onFailure:(String)->Unit){
  val context=LocalContext.current
  val aspectCallback by rememberUpdatedState(onAspect)
  val chromeNow by rememberUpdatedState(controlsVisible);val activityCallback by rememberUpdatedState(onActivity);val controlCallback by rememberUpdatedState(onControlReady);val stateCallback by rememberUpdatedState(onState)
@@ -181,13 +181,13 @@ private class ZoomVideoFrame(context:Context,player:Player):FrameLayout(context)
   return
  }
  val hardwareMimes=remember{hardwareVideoMimes()}
- val http=remember{mediaClient(file,http1Only)}
+ val http=remember{mediaClient(file,http1Only,streamingOnly=!allowFullFile)}
  val compatibilityPreferred=remember{java.util.concurrent.atomic.AtomicBoolean()}
- val rawCalls=remember{if(nativeFile(file) || http1Only)http else VideoCallFactory(http,videoHttpClient(true),preferCompatibility=compatibilityPreferred)}
- val handoff=remember{if(nativeFile(file))null else VideoResponseHandoff(rawCalls)}
+ val rawCalls=remember{if(directFile(file) || http1Only)http else VideoCallFactory(http,videoHttpClient(true,streamingOnly=!allowFullFile),preferCompatibility=compatibilityPreferred)}
+ val handoff=remember{if(directFile(file))null else VideoResponseHandoff(rawCalls)}
  val calls=handoff ?: rawCalls
  val sourceFactory=remember{OkHttpDataSource.Factory(calls).setUserAgent("PhotosBeam/${BuildConfig.VERSION_NAME}").setTransferListener(VideoTransferLog())}
- val replay=remember{if(nativeFile(file))null else VideoReplayBuffer(java.io.File(context.cacheDir,"video-replay"),calls,videoReplayBudget(context.cacheDir)){handoff?.offer(it) ?: false}}
+ val replay=remember{if(directFile(file) || !allowFullFile)null else VideoReplayBuffer(java.io.File(context.cacheDir,"video-replay"),calls,videoReplayBudget(context.cacheDir)){handoff?.offer(it) ?: false}}
  val replayHeaders=remember{mutableStateOf<Map<String,String>>(emptyMap())}
  val playbackFactory=remember{if(replay==null)sourceFactory else androidx.media3.datasource.DataSource.Factory{ReplayVideoDataSource(replay,sourceFactory){replayHeaders.value}.also{it.addTransferListener(VideoTransferLog())}}}
  var automaticTrack by remember{mutableStateOf(true)}
@@ -195,7 +195,7 @@ private class ZoomVideoFrame(context:Context,player:Player):FrameLayout(context)
  var suppliedTracks by remember{mutableStateOf<List<VideoQualityOption>>(emptyList())}
  LaunchedEffect(suppliedTracks,automaticTrack){optionsCallback(listOfNotNull(bestTrack.value?.copy(selected=automaticTrack))+suppliedTracks)}
 
- val resolver=remember{if(nativeFile(file))null else {
+ val resolver=remember{if(directFile(file))null else {
   val primary=videoHttpClient(http1Only).newBuilder().followRedirects(false).readTimeout(10,TimeUnit.SECONDS).build()
   if(http1Only)primary else VideoCallFactory(primary,videoHttpClient(true).newBuilder().followRedirects(false).readTimeout(10,TimeUnit.SECONDS).build(),preferCompatibility=compatibilityPreferred)
  }}
@@ -203,11 +203,15 @@ private class ZoomVideoFrame(context:Context,player:Player):FrameLayout(context)
   AppLog.add("Video: preparing progressive playback; processing=${processing.ifBlank{"unspecified"}}; MIME=${file.optString("mimeType")}")
   ExoPlayer.Builder(context,DefaultRenderersFactory(context).setMediaCodecSelector(hardwareFirstDecoderSelector()).setEnableDecoderFallback(true))
    .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(3000,10000,750,1500).setTargetBufferBytes(48*1024*1024).setPrioritizeTimeOverSizeThresholds(false).build())
-   .setMediaSourceFactory(DefaultMediaSourceFactory(playbackFactory,streamingExtractors(fastStartup)).setLoadErrorHandlingPolicy(androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy(1))).build()
+   .setMediaSourceFactory(DefaultMediaSourceFactory(playbackFactory,streamingExtractors(fastStartup)).setLoadErrorHandlingPolicy(object:androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy(1){
+    override fun getRetryDelayMsFor(info:androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy.LoadErrorInfo):Long =
+     if(hasStreamingSeekFailure(info.exception))C.TIME_UNSET else super.getRetryDelayMsFor(info)
+   })).build()
  }
  DisposableEffect(player){
   val startTime=android.os.SystemClock.elapsedRealtime()
-  AppLog.add("Video: ${if(nativeFile(file)) "phone/provider streaming" else "direct Google streaming"}; fast startup=$fastStartup; startup buffer 750ms; no local transcode")
+  AppLog.add("Video: full-file preparation=${if(allowFullFile && !directFile(file)) "explicitly enabled" else "OFF (streaming only)"}")
+  AppLog.add("Video: ${if(webFile(file)) "browser Google streaming" else if(nativeFile(file)) "phone/provider streaming" else "direct Google streaming"}; fast startup=$fastStartup; startup buffer 750ms; no local transcode")
   controlCallback{action->when(action){
    "play"->{if(player.playbackState==Player.STATE_ENDED)player.seekTo(0);player.play()}
    "pause"->player.pause()
@@ -226,7 +230,7 @@ private class ZoomVideoFrame(context:Context,player:Player):FrameLayout(context)
     message=if(state==Player.STATE_BUFFERING) "Buffering video…" else ""
     if(state==Player.STATE_ENDED)ended()
    }
-   override fun onVideoSizeChanged(size:VideoSize){if(size.height>0)aspectCallback(size.width*size.pixelWidthHeightRatio/size.height);decoded="Decoded video: ${size.width}x${size.height}";AppLog.add("Video decoded ${size.width}x${size.height}; pixel ratio ${size.pixelWidthHeightRatio}");infoCallback("${if(nativeFile(file)) "Phone/provider media (no PhotosBeam transcode)" else "Google-provided transcode"}\n$decoded\n$trackInfo\n$decoderInfo\nPreferred hardware codecs: ${hardwareMimes.joinToString().ifBlank{"none reported"}}\n$outputInfo")}
+   override fun onVideoSizeChanged(size:VideoSize){if(size.height>0)aspectCallback(size.width*size.pixelWidthHeightRatio/size.height);decoded="Decoded video: ${size.width}x${size.height}";AppLog.add("Video decoded ${size.width}x${size.height}; pixel ratio ${size.pixelWidthHeightRatio}");infoCallback("${if(webFile(file)) "Browser Google stream (browser-supplied quality)" else if(nativeFile(file)) "Phone/provider media (no PhotosBeam transcode)" else "Google-provided transcode"}\n$decoded\n$trackInfo\n$decoderInfo\nPreferred hardware codecs: ${hardwareMimes.joinToString().ifBlank{"none reported"}}\n$outputInfo")}
    override fun onTracksChanged(tracks:Tracks){
     val choices=mutableListOf<Pair<VideoTrackPreference,VideoQualityOption>>()
     val supported=mutableListOf<Triple<Tracks.Group,Int,Format>>()
@@ -258,11 +262,14 @@ private class ZoomVideoFrame(context:Context,player:Player):FrameLayout(context)
      if(group.type==C.TRACK_TYPE_VIDEO)trackInfo="Delivered track: ${f.width}x${f.height} • ${f.sampleMimeType} • "+(if(f.bitrate>0) "${"%.1f".format(f.bitrate/1_000_000.0)} Mbps" else "bitrate unknown")+(if(f.frameRate>0) " • ${f.frameRate} fps" else " • frame rate not reported")
 
     }
-    infoCallback("${if(nativeFile(file)) "Phone/provider media (no PhotosBeam transcode)" else "Google-provided transcode"}\n$decoded\n$trackInfo\n$decoderInfo\nPreferred hardware codecs: ${hardwareMimes.joinToString().ifBlank{"none reported"}}\n$outputInfo")
+    infoCallback("${if(webFile(file)) "Browser Google stream (browser-supplied quality)" else if(nativeFile(file)) "Phone/provider media (no PhotosBeam transcode)" else "Google-provided transcode"}\n$decoded\n$trackInfo\n$decoderInfo\nPreferred hardware codecs: ${hardwareMimes.joinToString().ifBlank{"none reported"}}\n$outputInfo")
    }
    override fun onPlayWhenReadyChanged(ready:Boolean,reason:Int){stateCallback(if(!ready) "Paused" else if(player.playbackState==Player.STATE_READY) "Playing" else "Buffering");if(reason==Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)interacted()}
    override fun onPositionDiscontinuity(oldPosition:Player.PositionInfo,newPosition:Player.PositionInfo,reason:Int){if(reason==Player.DISCONTINUITY_REASON_SEEK)interacted()}
-   override fun onPlayerError(error:PlaybackException){failureMessage="Video failed: ${mediaError(error)}. "+(if(generateSequence<Throwable>(error){it.cause}.any{it is java.net.SocketTimeoutException}) "Media delivery timed out before playback could proceed. Try the HTTP/1.1 connection option in Quality & info, or select files on the phone." else "Retry to refresh access, or send TV log to phone.");AppLog.add(failureMessage);failed(failureMessage)}
+   override fun onPlayerError(error:PlaybackException){if(hasStreamingSeekFailure(error)){
+    failureMessage="This Google video needs a seek that the server refuses. Streaming stopped; no full-file download was started. Try the browser helper or a local phone file. Full-file preparation is an explicit slow option in Quality."
+    AppLog.add(failureMessage);failed(failureMessage);return
+   };failureMessage="Video failed: ${mediaError(error)}. "+(if(generateSequence<Throwable>(error){it.cause}.any{it is java.net.SocketTimeoutException}) "Media delivery timed out before playback could proceed. Try the HTTP/1.1 connection option in Quality & info, or select files on the phone." else "Retry to refresh access, or send TV log to phone.");AppLog.add(failureMessage);failed(failureMessage)}
   }
   player.trackSelectionParameters=player.trackSelectionParameters.buildUpon().setPreferredVideoMimeTypes(*hardwareMimes.toTypedArray()).setForceHighestSupportedBitrate(true).build()
   player.addAnalyticsListener(object:androidx.media3.exoplayer.analytics.AnalyticsListener{
@@ -273,9 +280,9 @@ private class ZoomVideoFrame(context:Context,player:Player):FrameLayout(context)
   player.playWhenReady=true
   val prepareJob=playbackScope.launch{
    try{
-    message=if(nativeFile(file))"Preparing phone video…" else "Resolving Google download…"
-    val location=if(nativeFile(file))null else locateVideoSource(mediaUrl(file,"=dv"),token,resolver!!)
-    replayHeaders.value=location?.headers ?: mapOf("Authorization" to "Bearer $token")
+    message=if(directFile(file))"Preparing phone video…" else "Resolving Google download…"
+    val location=if(directFile(file))null else locateVideoSource(mediaUrl(file,"=dv"),token,resolver!!)
+    replayHeaders.value=location?.headers ?: if(webFile(file))emptyMap() else mapOf("Authorization" to "Bearer $token")
     sourceFactory.setDefaultRequestProperties(replayHeaders.value)
     player.setMediaItem(MediaItem.fromUri(location?.url?.toString() ?: mediaUrl(file,"=dv")))
     AppLog.add("Video: player connection ${if(http1Only)"HTTP/1.1 compatibility" else "automatic HTTP/2 or HTTP/1.1"}; hardware-first decoder selection")

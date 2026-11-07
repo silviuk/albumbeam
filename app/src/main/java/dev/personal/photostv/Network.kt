@@ -141,5 +141,12 @@ fun validateSelection(payload:JSONObject){
    val next="${uri.scheme}://${uri.host}:${uri.port}/${file.getString("nativePin")}"
    if(i==0)origin=next else require(next==origin)
   }
- }else require(!id.startsWith("native:"))
+ }else if(payload.optString("source")=="web"){
+  require(id.startsWith("web:"))
+  val items=payload.getJSONArray("items");require(items.length()==1)
+  val item=items.getJSONObject(0);require(item.getString("type")=="VIDEO")
+  val file=item.getJSONObject("mediaFile");require(webFile(file) && !nativeFile(file))
+  WebVideoLink.validateUrl(file.getString("baseUrl"))
+  require(file.getString("mimeType") in listOf("video/mp4","video/webm"))
+ }else require(!id.startsWith("native:") && !id.startsWith("web:"))
 }

@@ -75,6 +75,9 @@ class MainActivity:ComponentActivity() {
  private val pairingStore by lazy{PairingStore(this)}
  private var reconnectJob:Job?=null
  private var encryptMedia by mutableStateOf(true)
+ private var pendingWeb by mutableStateOf<WebVideoLink?>(null)
+ private var reviewWeb by mutableStateOf(false)
+ private var pasteWeb by mutableStateOf(false)
  private var sharedUris by mutableStateOf<List<Uri>>(emptyList())
  private var nativeBusy by mutableStateOf(false)
  private var hasSavedPairing by mutableStateOf(false)
@@ -138,6 +141,11 @@ class MainActivity:ComponentActivity() {
  }
  @Suppress("DEPRECATION")
  private fun receiveSharedMedia(incoming:Intent?){
+  if(BuildConfig.FLAVOR=="phone" && incoming?.action==Intent.ACTION_VIEW && incoming.data?.scheme=="photosbeam"){
+   try{pendingWeb=WebVideoLink.parse(incoming.data.toString());reviewWeb=true;AppLog.add("Phone: browser stream received for review")}
+   catch(e:Exception){status="Invalid browser stream link. Only complete HTTPS Google MP4/WebM streams are supported."}
+   return
+  }
   if(BuildConfig.FLAVOR!="phone" || incoming?.action !in listOf(Intent.ACTION_SEND,Intent.ACTION_SEND_MULTIPLE))return
   val found=mutableListOf<Uri>()
   if(incoming?.action==Intent.ACTION_SEND)incoming.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)?.let{found+=it}
@@ -227,10 +235,10 @@ class MainActivity:ComponentActivity() {
   val device=restored ?: DeviceIdentity.create()
   hasSavedPairing=restored!=null && saved?.optBoolean("paired")==true
   pairingStore.save("tv",device.json().put("paired",hasSavedPairing))
-  server=PairServer(device=device,initiallyPaired=hasSavedPairing,onPaired={pairingStore.save("tv",device.json().put("paired",true));runOnUiThread{hasSavedPairing=true;qr=null;status="Phone paired. Choose media on your phone."}},diagnostic={message -> runOnUiThread{status=message.take(450)}},control={action->runOnUiThread{remoteCommandHandler?.invoke(action)}},viewport={input->runOnUiThread{remoteViewportHandler?.invoke(input)}},state={remoteSummary},nativeSharing={session.startsWith("native:")},selectionId={if(session.startsWith("native:"))"" else session}) { j -> runOnUiThread { AppLog.add("TV: received media selection from companion"); val next=j.getString("session"); if(session.isNotBlank() && next!=session) end(false); token=j.getString("token"); session=next; qr=null
-   if(j.optString("source")=="native"){
+  server=PairServer(device=device,initiallyPaired=hasSavedPairing,onPaired={pairingStore.save("tv",device.json().put("paired",true));runOnUiThread{hasSavedPairing=true;qr=null;status="Phone paired. Choose media on your phone."}},diagnostic={message -> runOnUiThread{status=message.take(450)}},control={action->runOnUiThread{remoteCommandHandler?.invoke(action)}},viewport={input->runOnUiThread{remoteViewportHandler?.invoke(input)}},state={remoteSummary},nativeSharing={session.startsWith("native:")},selectionId={if(session.startsWith("native:") || session.startsWith("web:"))"" else session}) { j -> runOnUiThread { AppLog.add("TV: received media selection from companion"); val next=j.getString("session"); if(session.isNotBlank() && next!=session) end(false); token=j.getString("token"); session=next; qr=null
+   if(j.optString("source") in listOf("native","web")){
     job?.cancel();val list=j.getJSONArray("items");items=(0 until list.length()).map{list.getJSONObject(it)}
-    require(items.size<=2000);status="${items.size} phone/provider items • Keep phone connected";AppLog.add("TV: native selection loaded (${items.size} items)")
+    require(items.size<=2000);status=if(j.optString("source")=="web")"Browser video • Experimental direct Google stream" else "${items.size} phone/provider items • Keep phone connected";AppLog.add("TV: direct selection loaded (${items.size} items; source=${j.optString("source")})")
    }else load() } }
   try { server!!.start(); AppLog.add("TV: secure pairing server started; QR valid for five minutes"); val host=localAddress() ?: error("Connect the TV to your home network, then retry.")
    manualDisplay=server!!.manualCode;verificationDisplay=verification(server!!.pin)
@@ -351,6 +359,7 @@ class MainActivity:ComponentActivity() {
  }
 
  fun load() {
+  if(session.startsWith("web:")){status="Browser stream links expire. Reopen the video in Edge and send a fresh link if playback fails.";return}
   if(session.startsWith("native:")){status="Phone media: check phone remains connected, then retry playback";return}
   job?.cancel(); job=lifecycleScope.launch { try {
    status="Waiting for selection…"; AppLog.add("TV: waiting for Google Photos selection")
@@ -380,7 +389,7 @@ class MainActivity:ComponentActivity() {
  fun end(reset:Boolean=true) {
   job?.cancel(); val oldToken=token; val oldSession=session;val oldNative=items.firstOrNull()?.optJSONObject("mediaFile")?.takeIf{nativeFile(it)}
   token=""; session=""; items=emptyList(); epoch++
-  if(oldToken.isNotBlank() && oldSession.isNotBlank() && !oldSession.startsWith("native:")) lifecycleScope.launch(Dispatchers.IO){runCatching{api(oldToken,"sessions/$oldSession","DELETE")}}
+  if(oldToken.isNotBlank() && oldSession.isNotBlank() && !oldSession.startsWith("native:") && !oldSession.startsWith("web:")) lifecycleScope.launch(Dispatchers.IO){runCatching{api(oldToken,"sessions/$oldSession","DELETE")}}
   if(oldNative!=null && oldToken.isNotBlank())lifecycleScope.launch(Dispatchers.IO){runCatching{
    val url=oldNative.getString("baseUrl").toHttpUrl().newBuilder().encodedPath("/stop").build()
    mediaClient(oldNative).newCall(okhttp3.Request.Builder().url(url).header("Authorization","Bearer $oldToken").post("{}".toRequestBody()).build()).execute().close()
@@ -408,9 +417,28 @@ class MainActivity:ComponentActivity() {
   }
  }
  @OptIn(ExperimentalMaterial3Api::class)
+ @Composable private fun BrowserStreamDialogs(){
+  if(pasteWeb){
+   var input by remember{mutableStateOf("")};var error by remember{mutableStateOf("")}
+   AlertDialog(onDismissRequest={pasteWeb=false},title={Text("Paste browser stream")},text={Column{
+    Text("Copy the private phone link using the Edge helper. Links stay in memory and may expire.")
+    OutlinedTextField(input,{input=it},label={Text("Playback link")},maxLines=4)
+    if(error.isNotBlank())Text(error)
+   }},confirmButton={TextButton(onClick={try{pendingWeb=WebVideoLink.parse(input);pasteWeb=false;reviewWeb=true}catch(e:Exception){error="Invalid link. Use a complete HTTPS Google MP4/WebM playback link."}}){Text("Review")}},dismissButton={TextButton(onClick={pasteWeb=false}){Text("Cancel")}})
+  }
+  val link=pendingWeb
+  if(reviewWeb && link!=null)AlertDialog(onDismissRequest={reviewWeb=false},title={Text("Send browser video to TV?")},text={Text("This replaces the current TV selection. Source: ${java.net.URI(link.url).host}. Browser playback: ${link.width} × ${link.height}. Quality may differ from the original. The TV streams directly; signed links may expire or require browser cookies that PhotosBeam does not import."+(if(connection==null)" Connect to your TV first." else ""))},confirmButton={TextButton(enabled=connection!=null,onClick={task{
+   val c=connection ?: error("Connect to the TV first")
+   withContext(Dispatchers.IO){c.post("session",link.payload())}
+   session="";pendingWeb=null;reviewWeb=false;status="Browser video sent to TV. Check TV quality and playback details.";AppLog.add("Phone: browser video handed off (no cookies or OAuth token)")
+  }}){Text("Replace TV selection")}},dismissButton={TextButton(onClick={reviewWeb=false}){Text("Later")}})
+ }
+
+ @OptIn(ExperimentalMaterial3Api::class)
  @Composable fun Phone() {
   DesktopSelectionDialog()
   EdgeUnavailableDialog()
+  BrowserStreamDialogs()
   var tab by rememberSaveable{mutableIntStateOf(0)}
   var manual by remember{mutableStateOf(false)}
   if(manual)ManualPairing{manual=false}
@@ -445,6 +473,7 @@ class MainActivity:ComponentActivity() {
          Button(enabled=connection!=null && !nativeBusy && sharedUris.size<=2000,onClick={shareNative(sharedUris)}){Text("Send shared items to TV")}
          TextButton(onClick={sharedUris=emptyList()}){Text("Dismiss")}
         }}
+        if(pendingWeb!=null)OutlinedButton(onClick={reviewWeb=true}){Text("Review browser video")}
         Text("Choose what to watch",style=MaterialTheme.typography.headlineSmall)
         OutlinedCard(Modifier.fillMaxWidth()){Column(Modifier.padding(20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
          Text("Google Photos",style=MaterialTheme.typography.titleLarge)
@@ -464,6 +493,12 @@ class MainActivity:ComponentActivity() {
          Text("For original 4K60 files, choose a local camera or downloaded original file. System picker transcoding is disabled; PhotosBeam streams the provided bytes unchanged.",style=MaterialTheme.typography.bodySmall)
          if(nativeBusy)LinearProgressIndicator(Modifier.fillMaxWidth())
          OutlinedButton(onClick={stopService(NativeSharing.intent(this@MainActivity));status="Phone media sharing stopped"}){Text("Stop phone sharing")}
+        }}
+        OutlinedCard(Modifier.fillMaxWidth()){Column(Modifier.padding(20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+         Text("Edge selection helper",style=MaterialTheme.typography.titleLarge)
+         Text("Loaded-item ranges, Select as I scroll, and an experimental playing-video handoff. On Android Edge, install Tampermonkey, then our userscript. Google may use non-transferable blob streams; no original-quality guarantee.")
+         OutlinedButton(onClick={startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://github.com/silviuk/albumbeam/tree/main/edge-helper")))}){Text("Helper setup & download")}
+         OutlinedButton(onClick={pasteWeb=true}){Text("Paste browser stream")}
         }}
         Text("Selecting many photos",style=MaterialTheme.typography.titleLarge)
         Text("Both pickers support multiple items, subject to their limits. PhotosBeam cannot add Select all, whole-album, day or week controls inside Google’s or Android’s picker. Search an album or date in Google’s selection screen, then select the items it offers. Use any group selection controls your picker provides.")
@@ -555,6 +590,7 @@ class MainActivity:ComponentActivity() {
   var tvSettings by remember{mutableStateOf(false)}
   var qualityOpen by remember{mutableStateOf(false)}
   var http1Only by remember{mutableStateOf(false)}
+  var allowFullFile by remember{mutableStateOf(false)}
   var actionsFocused by remember{mutableStateOf(false)}
   var centerHeld by remember{mutableStateOf(false)}
   var fastStartup by remember{mutableStateOf(true)}
@@ -680,7 +716,7 @@ class MainActivity:ComponentActivity() {
    if(selected<0) LazyVerticalGrid(modifier=Modifier.weight(1f),columns=GridCells.Adaptive(180.dp),contentPadding=PaddingValues(12.dp),verticalArrangement=Arrangement.spacedBy(20.dp),horizontalArrangement=Arrangement.spacedBy(20.dp)) {
     itemsIndexed(items){i,item->androidx.tv.material3.Card(onClick={selected=i}){
      Column{
-      if(item.optString("type")=="VIDEO" && nativeFile(item.getJSONObject("mediaFile")))Box(Modifier.fillMaxWidth().height(110.dp).background(Color(0xFF101012)),contentAlignment=Alignment.Center){androidx.tv.material3.Text("▶",style=androidx.tv.material3.MaterialTheme.typography.headlineLarge)}
+      if(item.optString("type")=="VIDEO" && directFile(item.getJSONObject("mediaFile")))Box(Modifier.fillMaxWidth().height(110.dp).background(Color(0xFF101012)),contentAlignment=Alignment.Center){androidx.tv.material3.Text("▶",style=androidx.tv.material3.MaterialTheme.typography.headlineLarge)}
       else AsyncImage(ImageRequest.Builder(context).data(mediaUrl(item.getJSONObject("mediaFile"),"=w640-h360")).addHeader("Authorization","Bearer $token").build(),"${if(item.optString("type")=="VIDEO")"Video" else "Photo"} ${i+1}",imageLoader=loader,contentScale=ContentScale.Crop,modifier=Modifier.fillMaxWidth().height(110.dp))
       androidx.tv.material3.Text("${if(item.optString("type")=="VIDEO")"▶ Video" else "Photo"} ${i+1}",Modifier.padding(12.dp))
      }
@@ -729,8 +765,8 @@ class MainActivity:ComponentActivity() {
      .pointerInput(Unit){awaitPointerEventScope{while(true){val event=awaitPointerEvent(PointerEventPass.Initial);if(event.type==PointerEventType.Press || event.changes.any{it.pressed})activity()}}}
      .focusRequester(viewerFocus).focusable()){
      val file=item.getJSONObject("mediaFile")
-     if(item.getString("type")=="VIDEO")key(file.optString("baseUrl"),token,retryCount,fastStartup,http1Only){
-      VideoViewer(file,token,Modifier.fillMaxSize(),fastStartup=fastStartup,http1Only=http1Only,viewport=viewport,zoomMode=zoomMode,onAspect={mediaAspect=it;viewport=viewport.bounded(it,displayAspect)},controlsVisible=controlsVisible,onActivity={focus->activity(focus)},onControlReady={videoControl=it},onState={playerState=it},onInfo={qualityInfo=it},onOptions={videoOptions=it},onEnded={if(slideshow)advance()},onInteraction={slideshow=false},onFailure={message->status=message})
+     if(item.getString("type")=="VIDEO")key(file.optString("baseUrl"),token,retryCount,fastStartup,http1Only,allowFullFile){
+      VideoViewer(file,token,Modifier.fillMaxSize(),fastStartup=fastStartup,http1Only=http1Only,allowFullFile=allowFullFile,viewport=viewport,zoomMode=zoomMode,onAspect={mediaAspect=it;viewport=viewport.bounded(it,displayAspect)},controlsVisible=controlsVisible,onActivity={focus->activity(focus)},onControlReady={videoControl=it},onState={playerState=it},onInfo={qualityInfo=it},onOptions={videoOptions=it},onEnded={if(slideshow)advance()},onInteraction={slideshow=false},onFailure={message->status=message})
      }else key(file.optString("baseUrl"),token,retryCount,photoQuality){
       PhotoViewer(file,token,loader,Modifier.fillMaxSize(),quality=photoQuality,viewport=viewport,warmth=photoWarmth,onAspect={mediaAspect=it;viewport=viewport.bounded(it,displayAspect)},onInfo={qualityInfo=it},onLoaded={loaded=true},onFailure={status=it})
      }
@@ -762,13 +798,15 @@ class MainActivity:ComponentActivity() {
       Text("Source metadata: ${sourceDimensions(file)} • ${file.optString("mimeType")}")
       Text(qualityInfo.ifBlank{"Waiting for decoded media details…"})
       if(item.getString("type")=="VIDEO"){
-       if(!nativeFile(file)){
+       if(!directFile(file)){
+        Text("Full-file preparation: ${if(allowFullFile) "On (slow)" else "Off (streaming only)"}. A Google video with metadata at the end cannot start immediately if its server refuses byte seeking.")
+        Action(if(allowFullFile)"Use streaming only" else "Allow full-file preparation (slow)"){allowFullFile=!allowFullFile;retryCount++;qualityInfo="";qualityOpen=false;actionsFocused=false}
         Text("Google connection: ${if(http1Only)"HTTP/1.1 compatibility" else "automatic HTTP/2 or HTTP/1.1"}. Download redirects use a separate connection from the authorization host.")
         Action(if(http1Only)"Retry automatic Google connection" else "Retry Google using HTTP/1.1"){http1Only=!http1Only;retryCount++;qualityInfo="";qualityOpen=false;actionsFocused=false}
        }
        Text("Fast startup: ${if(fastStartup) "On" else "Off"}. Skipping an optional seek index can limit seeking on some videos.")
        Action(if(fastStartup) "Restart with seek index" else "Restart with fast startup"){fastStartup=!fastStartup;qualityInfo="";videoOptions=emptyList();qualityOpen=false}
-       Text(if(nativeFile(file))"The phone streams the provider-supplied file without PhotosBeam transcoding. Cloud providers may supply a converted file. The decoded track below shows actual playback quality." else "Google supplies a transcoded video. Original-file video download and a server resolution selector are unavailable. Source metadata does not prove delivered playback quality.")
+       Text(if(webFile(file))"Experimental browser playback URL. Quality is supplied by Google’s web player; it may differ from the original. Cookie-bound or segmented streams cannot be transferred. No full-file fallback is used." else if(nativeFile(file))"The phone streams the provider-supplied file without PhotosBeam transcoding. Cloud providers may supply a converted file. The decoded track below shows actual playback quality." else "Google supplies a transcoded video. Original-file video download and a server resolution selector are unavailable. Source metadata does not prove delivered playback quality.")
        val tracks=videoOptions.filter{it.mime.isNotBlank()}
        videoOptions.firstOrNull{it.mime.isBlank()}?.let{option->Action((if(option.selected)"✓ " else "")+option.label){option.choose();qualityOpen=false}}
        if(tracks.isNotEmpty()){

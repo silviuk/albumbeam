@@ -1,5 +1,19 @@
 PhotosBeam — personal photo and video viewer for Android TV
 
+Version 0.2.8: Edge selection helper + streaming-only Google playback by default.
+Helper setup: https://github.com/silviuk/albumbeam/tree/main/edge-helper
+Android Edge: install Tampermonkey, then our userscript; use Choose in Edge.
+Desktop Edge: load the helper ZIP unpacked. Loaded ranges and scroll selection
+operate only on controls Google exposes; no whole-album API or hidden-item access.
+Experimental playing-video handoff transfers progressive Google HTTPS URLs for
+phone review. Blob/segmented/cookie-bound sources may not transfer. Browser video
+quality may differ from original; no universal Google streaming endpoint is added.
+Ignored nonzero video seeks now stop before reading a whole response. Quality >
+Allow full-file preparation (slow) is opt-in for Picker videos only. Without a
+seekable stream or metadata-first MP4, immediate playback is not possible through
+that endpoint. Choose a local original phone file for reliable original bytes.
+
+
 Version 0.2.3: formerly AlbumBeam. Both app labels, notifications, diagnostics,
 launcher icons and the TV banner now use PhotosBeam. Install these APKs over
 the previous apps; do not uninstall. App package IDs, signing certificate, private
