@@ -112,4 +112,24 @@ class WirePairingTest {
   val first=PairServer{};val second=PairServer{}
   try{assertNotEquals(first.pin,second.pin)}finally{first.stop();second.stop()}
  }
+ @Test fun savedPairingSurvivesServerRestartAndRejectsNewPairing(){
+  val device=DeviceIdentity.create()
+  val first=PairServer(device=device){}
+  val auth:String
+  first.start()
+  try{val phone=Connection(first.link("127.0.0.1"));phone.pair();auth=phone.auth}finally{first.stop()}
+  val restarted=PairServer(device=DeviceIdentity.parse(device.json()),initiallyPaired=true){}
+  try{
+   restarted.start()
+   assertEquals(first.pin,restarted.pin)
+   val phone=Connection(restarted.link("127.0.0.1")).apply{this.auth=auth}
+   phone.post("log-inbox",JSONObject())
+   assertThrows(IllegalArgumentException::class.java){Connection(restarted.link("127.0.0.1")).pair()}
+  }finally{restarted.stop()}
+ }
+ @Test fun forgettingDeviceRejectsTheOldCredentials(){
+  val old=DeviceIdentity.create();val server=PairServer(initiallyPaired=true){}
+  try{server.start();val phone=Connection(server.link("127.0.0.1")).apply{auth=old.auth};assertThrows(IllegalArgumentException::class.java){phone.post("log-inbox",JSONObject())}}finally{server.stop()}
+ }
+
 }

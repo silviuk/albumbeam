@@ -1,0 +1,23 @@
+name: Android checks
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v6.2.0
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android platform
+        run: sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
+      - name: Build both apps, test and lint
+        run: ./gradlew assembleDebug test lintPhoneDebug lintTvDebug assembleAndroidTest --no-daemon

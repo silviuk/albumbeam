@@ -1,5 +1,70 @@
 AlbumBeam — personal Google Photos session viewer
 
+
+Development version 0.2.0
+The phone now has Photos, Remote and Settings destinations, dynamic system colors,
+light/dark themes, edge-to-edge insets and adaptive navigation. The TV uses
+focusable media cards, a simpler home screen and a separate settings/log panel.
+
+Pair once after installing this version on BOTH devices. Device identity and
+connection credentials are encrypted with an Android Keystore AES key and saved
+privately with backups disabled. Pairing survives launches and reboots; open
+AlbumBeam on both devices to reconnect. Discovery finds the same pinned TV after
+its IP or listening port changes. End viewing retains pairing; Forget pairing
+revokes the saved device. Google tokens, picker sessions and media selections
+remain temporary and can expire independently. A reinstall/data reset loses
+pairing. Automatic rediscovery requires a LAN that permits DNS-SD/mDNS.
+
+Three phone selection entry points are available:
+- Google Photos: existing Picker API flow; the TV fetches directly from Google.
+- Phone & cloud picker: Android's native multi-select picker, including eligible
+  cloud providers enabled on the phone. No broad media-library permission.
+- Choose files on phone / Gallery > Share > AlbumBeam: select local originals or
+  downloaded files using Documents or your gallery's selection tools. Confirm
+  Send shared items to TV after the companion opens. Gallery sharing limits vary;
+  a web link shared from Google Photos does not grant access to its media files.
+
+Native/file selections are streamed from the phone using authenticated HTTP range
+requests, without AlbumBeam transcoding, whole-file buffering or disk copies.
+Android picker transcoding is explicitly disabled and original media format is
+requested when opening provider files on supported Android versions. Cloud
+providers still control which file they supply; original uploads are not promised.
+Keep the phone on the same network. A foreground sharing notification has a Stop
+button; Stop phone sharing also revokes access. Sharing stops after service/process
+termination or reboot and files must be selected again. Ending/replacing a session
+revokes access on a best-effort basis, including a stop request to the phone.
+
+Settings > Encrypt media with HTTPS may be switched off before the next native
+selection. This sends phone-to-TV media over plain HTTP on numeric private-LAN
+addresses. Other devices on that network may observe media and its temporary
+access grant. Pairing/control remain encrypted; saved credentials remain encrypted.
+Google API and media connections always retain HTTPS. Turning this off does not
+change Google processing, source quality or buffering on Google's servers.
+
+Video playback chooses the highest supported resolution, then frame rate and
+bitrate among available tracks. The TV requests a 4K/60Hz display mode when
+available; the OS may retain another mode. Quality & info shows the delivered
+video track, reported fps/bitrate, decoder output size, actual display timing and
+HTTP/HTTPS transport. Unknown frame rate is reported explicitly. A compatible
+4K60 file, decoder, display mode and sufficient LAN throughput are all needed.
+Google Photos Picker's =dv video download is transcoded by Google; there is no
+API parameter for an original 4K60 stream. Local original files are the suitable
+route when unchanged source video matters. AlbumBeam never transcodes videos.
+
+Select all / album / day / week
+Google's picker owns its selection controls. AlbumBeam cannot add Select all or
+retrieve an entire existing album, timeline, day or week through the Picker API.
+Search album titles/dates and use the controls Google presents; desktop range
+selection behavior is not guaranteed. Google's session limit is 2,000 items.
+Android's picker also owns its controls and its device-dependent selection limit.
+For local media, use your gallery's Select all or date groups when offered, then
+Share > AlbumBeam. Alternatively download originals into a local folder and use
+Choose files on phone. AlbumBeam accepts at most 2,000 files per session.
+
+Development verification
+See VALIDATION-0.2.0.txt for checks completed and checks blocked in this environment.
+Do not treat the source version as a published, device-validated release.
+
 Build prerequisites
 Install Android Studio, JDK 17, Android SDK Platform 37.0 and build tools. Set
 local.properties sdk.dir to your SDK directory. Run ./gradlew assembleDebug test.
@@ -38,12 +103,12 @@ the selection has expired. Replacing a selection ends the previous session.
 Troubleshooting
 Pair again if the QR is over five minutes old or an interrupted pairing lost its
 acknowledgement. Pairing QR codes are single-use. Certificate mismatch is fatal;
-never disable certificate validation. Use End / Pair again to regenerate.
+never disable certificate validation. Use TV Settings > Forget paired phone to revoke credentials and generate a new QR.
 Guest Wi-Fi, client isolation, VPNs and changing network addresses can interrupt
-pairing. Use the same ordinary LAN and regenerate the QR after network changes.
+pairing. Use the same ordinary LAN; saved pairing reconnects through discovery after network changes.
 403/auth errors: verify API enablement, OAuth package, signing SHA-1, scope and
 test-user account. Retry after connectivity returns. Use Skip for failed media.
-Process death loses the session. Reopen both apps and pair/select again.
+Process death loses the viewing session. Reopen both apps to reconnect, then select again.
 
 Privacy and limitations
 Tokens and session state are in memory; no photo collection is saved. Image disk

@@ -1,0 +1,34 @@
+AlbumBeam 0.2.0 development validation
+
+Completed locally (offline, using the cached Android/Kotlin dependencies):
+- Kotlin/Compose compiler: main and phone sources compile, including all TV UI.
+- JVM test sources compile, including real TLS restart/revocation tests.
+- 38 non-network JVM tests pass: pairing gates, key selection, media sizing,
+  control idle timing, identity serialization, native ranges, private-LAN address
+  restrictions, native selection validation and maximum video quality ordering.
+- All instrumentation sources compile, including encrypted credential storage,
+  pinned native-file byte equality/ranges, unauthorized access and invalid ranges.
+- Android manifest merger checks pass for both flavor overlays when supplied
+  the project namespace. TV-only cleartext opt-in and phone-only service/share
+  entry points are present.
+- git diff --check passes.
+
+Blocked locally:
+- Gradle cannot initialize FileLockContentionHandler because the current sandbox
+  prevents finding/opening its required local network socket.
+- Real loopback TLS/HTTP JVM tests cannot run under that same socket restriction.
+- Full Gradle build/lint/APK packaging is delegated to Android checks on GitHub;
+  this record does not claim that remote job passed.
+- Shell access to GitHub is unavailable; repository API tools can be used instead.
+
+Not run on physical hardware:
+- Pairing across reboot, process termination and DHCP/port changes.
+- Picker/provider integration, incoming gallery sharing and foreground service.
+- Native HTTPS/HTTP streaming, range seeking and behavior with cloud providers.
+- Maximum 4K60/HDR decoding, output timing, throughput, focus and screenshots.
+
+Release status:
+- Source version is 0.2.0, versionCode 11.
+- No new APKs have been signed, installed or published in this environment.
+- Preserve the existing private personal-test signing key before building APKs
+  for updates. No signing material is placed in source or the CI workflow.

@@ -105,17 +105,18 @@ private class PhotoSurface(context:Context,private val pixels:PhotoPixels):Surfa
   val meta=file.optJSONObject("mediaFileMetadata")
   AppLog.add("Photo request ${pixels.width}x${pixels.height}; source ${meta?.optInt("width")}x${meta?.optInt("height")}; display mode ${display.mode.physicalWidth}x${display.mode.physicalHeight}")
   val request=ImageRequest.Builder(context)
-   .data(photoRequest(file.getString("baseUrl"),pixels,quality))
+   .data(if(nativeFile(file))mediaUrl(file,"") else photoRequest(file.getString("baseUrl"),pixels,quality))
    .addHeader("Authorization","Bearer $token")
    .size(pixels.width,pixels.height).scale(Scale.FIT).precision(Precision.EXACT)
    .allowHardware(false).bitmapConfig(Bitmap.Config.ARGB_8888)
    .diskCachePolicy(CachePolicy.DISABLED)
    .memoryCacheKey("full:${file.getString("baseUrl")}:${pixels.width}x${pixels.height}:$quality:${token.hashCode()}").build()
-  val result=loader.execute(request)
+  val activeLoader=if(nativeFile(file))ImageLoader.Builder(context).okHttpClient(mediaClient(file)).diskCachePolicy(CachePolicy.DISABLED).build() else loader
+  val result=try{activeLoader.execute(request)}finally{if(activeLoader!==loader)activeLoader.shutdown()}
   loading=false
   if(result is SuccessResult){
    val image=(result.drawable as? BitmapDrawable)?.bitmap
-   if(image!=null){surface.bitmap=image;surface.drawPhoto();AppLog.add("Photo decoded ${image.width}x${image.height}; ${image.byteCount/1024} KiB; ${result.dataSource}");infoCallback("${quality.label}\nDecoded photo: ${image.width}x${image.height}\nSurface target: ${pixels.width}x${pixels.height}\nDisplay output: ${current.physicalWidth}x${current.physicalHeight}\nFull-size files are decoded to a bounded TV resolution; no cropping.");loadedCallback()}
+   if(image!=null){surface.bitmap=image;surface.drawPhoto();AppLog.add("Photo decoded ${image.width}x${image.height}; ${image.byteCount/1024} KiB; ${result.dataSource}");infoCallback("${quality.label}\nDecoded photo: ${image.width}x${image.height}\nSurface target: ${pixels.width}x${pixels.height}\nDisplay output: ${current.physicalWidth}x${current.physicalHeight}\nTransport: ${mediaTransport(file)}\nFull-size files are decoded to a bounded TV resolution; no cropping.");loadedCallback()}
    else{failure="Photo format could not be rendered.";failedCallback(failure)}
   }else if(result is ErrorResult){failure="Photo failed: ${mediaError(result.throwable)}. Retry to refresh access.";AppLog.add(failure);failedCallback(failure)}
  }
@@ -135,7 +136,7 @@ private class PhotoSurface(context:Context,private val pixels:PhotoPixels):Surfa
  var decoded by remember{mutableStateOf("Decoded resolution: waiting for playback")};var trackInfo by remember{mutableStateOf("")}
  val ended by rememberUpdatedState(onEnded);val interacted by rememberUpdatedState(onInteraction);val failed by rememberUpdatedState(onFailure)
  val outputMode=(context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager).defaultDisplay.mode
- val outputInfo="Display output: ${outputMode.physicalWidth}x${outputMode.physicalHeight}"
+ val outputInfo="Display output: ${outputMode.physicalWidth}x${outputMode.physicalHeight} @ ${outputMode.refreshRate} Hz\nTransport: ${mediaTransport(file)}"
  val processing=videoReadiness(file)
  var message by remember{mutableStateOf("Preparing video…")}
  if(processing=="PROCESSING" || processing=="FAILED"){
@@ -146,7 +147,7 @@ private class PhotoSurface(context:Context,private val pixels:PhotoPixels):Surfa
  }
  val player=remember{
   AppLog.add("Video: preparing progressive playback; processing=${processing.ifBlank{"unspecified"}}; MIME=${file.optString("mimeType")}")
-  val http=videoHttpClient()
+  val http=mediaClient(file)
   val source=OkHttpDataSource.Factory(http).setDefaultRequestProperties(mapOf("Authorization" to "Bearer $token")).setUserAgent("AlbumBeam/${BuildConfig.VERSION_NAME}")
   ExoPlayer.Builder(context,DefaultRenderersFactory(context).setEnableDecoderFallback(true))
    .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(5000,20000,750,1500).setPrioritizeTimeOverSizeThresholds(true).build())
@@ -154,8 +155,9 @@ private class PhotoSurface(context:Context,private val pixels:PhotoPixels):Surfa
  }
  DisposableEffect(player){
   val startTime=android.os.SystemClock.elapsedRealtime()
-  AppLog.add("Video: direct Google streaming; fast startup=$fastStartup; startup buffer 750ms; no local transcode")
+  AppLog.add("Video: ${if(nativeFile(file)) "phone/provider streaming" else "direct Google streaming"}; fast startup=$fastStartup; startup buffer 750ms; no local transcode")
   controlCallback{action->when(action){"play"->{if(player.playbackState==Player.STATE_ENDED)player.seekTo(0);player.play()};"pause"->player.pause()}}
+  var choseMaximumTrack=false
   val listener=object:Player.Listener{
    override fun onPlaybackStateChanged(state:Int){
     AppLog.add("Video playback state: "+when(state){Player.STATE_BUFFERING->"BUFFERING";Player.STATE_READY->"READY";Player.STATE_ENDED->"ENDED";else->"IDLE"})
@@ -163,30 +165,37 @@ private class PhotoSurface(context:Context,private val pixels:PhotoPixels):Surfa
     message=if(state==Player.STATE_BUFFERING) "Buffering video…" else ""
     if(state==Player.STATE_ENDED)ended()
    }
-   override fun onVideoSizeChanged(size:VideoSize){decoded="Decoded video: ${size.width}x${size.height}";AppLog.add("Video decoded ${size.width}x${size.height}; pixel ratio ${size.pixelWidthHeightRatio}");infoCallback("Google-provided transcode\n$decoded\n$trackInfo\n$outputInfo")}
+   override fun onVideoSizeChanged(size:VideoSize){decoded="Decoded video: ${size.width}x${size.height}";AppLog.add("Video decoded ${size.width}x${size.height}; pixel ratio ${size.pixelWidthHeightRatio}");infoCallback("${if(nativeFile(file)) "Phone/provider media (no AlbumBeam transcode)" else "Google-provided transcode"}\n$decoded\n$trackInfo\n$outputInfo")}
    override fun onTracksChanged(tracks:Tracks){
     val choices=mutableListOf<VideoQualityOption>()
+    val supported=mutableListOf<Triple<Tracks.Group,Int,Format>>()
     for(group in tracks.groups)if(group.type==C.TRACK_TYPE_VIDEO)for(i in 0 until group.length)if(group.isTrackSupported(i)){
-     val format=group.getTrackFormat(i)
-     val label="${format.width}x${format.height}"+(if(format.bitrate>0) " • ${"%.1f".format(format.bitrate/1_000_000.0)} Mbps" else "")
+     val format=group.getTrackFormat(i);supported+=Triple(group,i,format)
+     val label="${format.width}x${format.height}"+(if(format.frameRate>0)" • ${format.frameRate} fps" else "")+(if(format.bitrate>0) " • ${"%.1f".format(format.bitrate/1_000_000.0)} Mbps" else "")
      choices+=VideoQualityOption(label,group.isTrackSelected(i)){
       player.trackSelectionParameters=player.trackSelectionParameters.buildUpon().setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup,listOf(i))).build()
       AppLog.add("Video: user selected $label")
      }
+    }
+    if(!choseMaximumTrack && supported.isNotEmpty()){
+     choseMaximumTrack=true
+     val best=supported.maxByOrNull{PlaybackQuality(it.third.width,it.third.height,it.third.frameRate,it.third.bitrate)}!!
+     if(!best.first.isTrackSelected(best.second))player.trackSelectionParameters=player.trackSelectionParameters.buildUpon().setOverrideForType(TrackSelectionOverride(best.first.mediaTrackGroup,listOf(best.second))).build()
+     AppLog.add("Video: maximum supported track requested ${best.third.width}x${best.third.height}; ${best.third.frameRate} fps")
     }
     optionsCallback(choices)
 
     for(group in tracks.groups)for(i in 0 until group.length)if(group.isTrackSelected(i)){
      val f=group.getTrackFormat(i)
      AppLog.add("Video track ${f.sampleMimeType}; ${f.width}x${f.height}; codecs=${f.codecs}; bitrate=${f.bitrate}")
-     if(group.type==C.TRACK_TYPE_VIDEO)trackInfo="Delivered track: ${f.width}x${f.height} • ${f.sampleMimeType} • "+(if(f.bitrate>0) "${"%.1f".format(f.bitrate/1_000_000.0)} Mbps" else "bitrate unknown")+(if(f.frameRate>0) " • ${f.frameRate} fps" else "")
+     if(group.type==C.TRACK_TYPE_VIDEO)trackInfo="Delivered track: ${f.width}x${f.height} • ${f.sampleMimeType} • "+(if(f.bitrate>0) "${"%.1f".format(f.bitrate/1_000_000.0)} Mbps" else "bitrate unknown")+(if(f.frameRate>0) " • ${f.frameRate} fps" else " • frame rate not reported")
 
     }
-    infoCallback("Google-provided transcode\n$decoded\n$trackInfo\n$outputInfo")
+    infoCallback("${if(nativeFile(file)) "Phone/provider media (no AlbumBeam transcode)" else "Google-provided transcode"}\n$decoded\n$trackInfo\n$outputInfo")
    }
    override fun onPlayWhenReadyChanged(ready:Boolean,reason:Int){stateCallback(if(!ready) "Paused" else if(player.playbackState==Player.STATE_READY) "Playing" else "Buffering");if(reason==Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)interacted()}
    override fun onPositionDiscontinuity(oldPosition:Player.PositionInfo,newPosition:Player.PositionInfo,reason:Int){if(reason==Player.DISCONTINUITY_REASON_SEEK)interacted()}
-   override fun onPlayerError(error:PlaybackException){message="Video failed: ${mediaError(error)}. "+(if(generateSequence<Throwable>(error){it.cause}.any{it is java.net.SocketTimeoutException}) "Google video delivery timed out before playback could proceed. Retry and share the TV log." else "Retry to refresh access, or send TV log to phone.");AppLog.add(message);failed(message)}
+   override fun onPlayerError(error:PlaybackException){message="Video failed: ${mediaError(error)}. "+(if(generateSequence<Throwable>(error){it.cause}.any{it is java.net.SocketTimeoutException}) "Media delivery timed out before playback could proceed. Retry and share the TV log." else "Retry to refresh access, or send TV log to phone.");AppLog.add(message);failed(message)}
   }
   player.trackSelectionParameters=player.trackSelectionParameters.buildUpon().setForceHighestSupportedBitrate(true).build()
   player.addAnalyticsListener(object:androidx.media3.exoplayer.analytics.AnalyticsListener{
@@ -194,7 +203,7 @@ private class PhotoSurface(context:Context,private val pixels:PhotoPixels):Surfa
    override fun onRenderedFirstFrame(eventTime:androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,output:Any,renderTimeMs:Long){AppLog.add("Video: first frame rendered after ${android.os.SystemClock.elapsedRealtime()-startTime}ms")}
   })
   player.addListener(listener)
-  player.setMediaItem(MediaItem.fromUri(file.getString("baseUrl")+"=dv"));player.prepare();player.playWhenReady=true
+  player.setMediaItem(MediaItem.fromUri(mediaUrl(file,"=dv")));player.prepare();player.playWhenReady=true
   onDispose{controlCallback(null);player.removeListener(listener);player.release()}
  }
  Box(modifier.background(Color.Black)){
@@ -211,4 +220,12 @@ private class PhotoSurface(context:Context,private val pixels:PhotoPixels):Surfa
   }},update={view->if(!controlsVisible){view.hideController();if(!view.hasFocus())view.requestFocus()}},modifier=Modifier.fillMaxSize())
   if(message.isNotBlank())Text(message,Modifier.padding(top=100.dp,start=24.dp))
  }
+}
+
+/** Prefer resolution, then frame rate, then bitrate among tracks the decoder supports. */
+data class PlaybackQuality(val width:Int,val height:Int,val frameRate:Float,val bitrate:Int):Comparable<PlaybackQuality>{
+ override fun compareTo(other:PlaybackQuality)=compareValuesBy(this,other,
+  {maxOf(0,it.width).toLong()*maxOf(0,it.height)},
+  {if(it.frameRate.isFinite())maxOf(0f,it.frameRate)else 0f},
+  {maxOf(0,it.bitrate)})
 }
